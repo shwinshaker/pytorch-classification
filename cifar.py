@@ -21,6 +21,7 @@ import torchvision.datasets as datasets
 import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
+from utils import ModelHooker#, LayerHooker
 
 
 model_names = sorted(name for name in models.__dict__
@@ -87,6 +88,9 @@ assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can onl
 # Use CUDA
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 use_cuda = torch.cuda.is_available()
+# ---------------------
+use_cuda = False
+# ---------------------
 
 # Random seed
 if args.manualSeed is None:
@@ -168,7 +172,11 @@ def main():
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
 
-    model = torch.nn.DataParallel(model).cuda()
+    # hooker = LayerHooker(model.layer1, args.checkpoint)
+    hooker = ModelHooker(model, args.checkpoint)
+
+    if use_cuda:
+        model = torch.nn.DataParallel(model).cuda()
     cudnn.benchmark = True
     print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
     criterion = nn.CrossEntropyLoss()
@@ -205,7 +213,12 @@ def main():
         print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
 
         train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
+
         test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda)
+
+        # trace activations for test
+        ## it's not clear should do this for training or for testing. Chang did for test.
+        hooker.output()
 
         # append logger file
         logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])
@@ -221,6 +234,7 @@ def main():
                 'optimizer' : optimizer.state_dict(),
             }, is_best, checkpoint=args.checkpoint)
 
+    hooker.close()
     logger.close()
     logger.plot()
     savefig(os.path.join(args.checkpoint, 'log.eps'))
@@ -245,7 +259,7 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         data_time.update(time.time() - end)
 
         if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda(async=True)
+            inputs, targets = inputs.cuda(), targets.cuda(non_blocking=True) # async=True)
         inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
 
         # compute output
@@ -254,9 +268,12 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        # losses.update(loss.data[0], inputs.size(0))
+        # top1.update(prec1[0], inputs.size(0))
+        # top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.data.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -303,17 +320,22 @@ def test(testloader, model, criterion, epoch, use_cuda):
 
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
-        inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
+        # inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
+        inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
 
         # compute output
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
+        with torch.no_grad():
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        # losses.update(loss.data[0], inputs.size(0))
+        # top1.update(prec1[0], inputs.size(0))
+        # top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.data.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)

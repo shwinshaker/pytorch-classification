@@ -33,6 +33,9 @@ class BasicBlock(nn.Module):
         self.stride = stride
 
     def forward(self, x):
+        """
+            x is not residual, but out...
+        """
         residual = x
 
         out = self.conv1(x)
@@ -41,6 +44,7 @@ class BasicBlock(nn.Module):
 
         out = self.conv2(out)
         out = self.bn2(out)
+        # there's no skip connection inside the block
 
         if self.downsample is not None:
             residual = self.downsample(x)
@@ -52,7 +56,7 @@ class BasicBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
-    expansion = 4
+    expansion = 4 # channel expands by 4 times
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
