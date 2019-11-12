@@ -8,12 +8,13 @@ import os
 import sys
 import time
 import math
+import argparse
 
 import torch.nn as nn
 import torch.nn.init as init
 from torch.autograd import Variable
 
-__all__ = ['get_mean_and_std', 'init_params', 'mkdir_p', 'AverageMeter']
+__all__ = ['get_mean_and_std', 'init_params', 'mkdir_p', 'AverageMeter', 'str2bool']
 
 
 def get_mean_and_std(dataset):
@@ -55,6 +56,17 @@ def mkdir_p(path):
             pass
         else:
             raise
+
+def str2bool(v):
+    '''converter for boolean argparser'''
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 class AverageMeter(object):
     """Computes and stores the average and current value

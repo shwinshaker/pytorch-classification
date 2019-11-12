@@ -21,8 +21,13 @@ import torchvision.datasets as datasets
 import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
-from utils import ModelHooker#, LayerHooker
+from utils import ModelHooker, Trigger
+from utils import StateDictTools
+from utils import str2bool
 
+import warnings
+
+torch.autograd.set_detect_anomaly(True)
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -79,6 +84,11 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
 
+#growth
+parser.add_argument('--grow', type=str2bool, const=True, default=False, nargs='?', help='Let us grow!')
+parser.add_argument('--lastn', type=int, default=5, help='Smooth scope of truncated err estimation')
+parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger threshold for growing')
+
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
 
@@ -89,7 +99,7 @@ assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can onl
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 use_cuda = torch.cuda.is_available()
 # ---------------------
-use_cuda = False
+# use_cuda = False
 # ---------------------
 
 # Random seed
@@ -163,7 +173,13 @@ def main():
                     widen_factor=args.widen_factor,
                     dropRate=args.drop,
                 )
-    elif args.arch.endswith('resnet'):
+    elif args.arch.startswith('resnet'):
+        model = models.__dict__[args.arch](
+                    num_classes=num_classes,
+                    depth=args.depth,
+                    block_name=args.block_name,
+                )
+    elif args.arch.startswith('accnet'):
         model = models.__dict__[args.arch](
                     num_classes=num_classes,
                     depth=args.depth,
@@ -171,16 +187,40 @@ def main():
                 )
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
+    print("     ----------------------------- %s ----------------------------------" % args.arch)
+    print("     depth: %i" % args.depth)
+    print("     block: %s" % args.block_name)
+    print("     ----------------------------------------------------------------------")
+    print(model)
+    print("     ----------------------------------------------------------------------")
 
     # hooker = LayerHooker(model.layer1, args.checkpoint)
     hooker = ModelHooker(model, args.checkpoint)
+    if args.grow:
+        trigger = Trigger(hooker, lastn=args.lastn, thresh=args.threshold) # test
+    multipliers = [1,1,1] # initial multiplier, should be fixed
 
     if use_cuda:
-        model = torch.nn.DataParallel(model).cuda()
+        # model = torch.nn.DataParallel(model).cuda()
+        model.cuda()
     cudnn.benchmark = True
     print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+
+    print("     --------------------------- hypers ----------------------------------")
+    print("     Epochs: %i" % args.epochs)
+    print("     Learning rate: %g" % args.lr)
+    print("     Momentum: %g" % args.momentum)
+    print("     Weight decay: %g" % args.weight_decay)
+    print("     Learning rate schedule: ", args.schedule)
+    print("     Learning rate decay factor: %g" % args.gamma)
+    if args.grow:
+        print("     --------------------------- growth ----------------------------------")
+        print("     Initial multiplier: ", multipliers)
+        print("     err threshold: %g" % args.threshold)
+        print("     smoothing scope: %i" % args.lastn)
+        print("     ---------------------------------------------------------------------")
 
     # Resume
     title = 'cifar-10-' + args.arch
@@ -212,13 +252,8 @@ def main():
 
         print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
 
-        train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
-
+        train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda, test_len=None)
         test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda)
-
-        # trace activations for test
-        ## it's not clear should do this for training or for testing. Chang did for test.
-        hooker.output()
 
         # append logger file
         logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])
@@ -234,7 +269,58 @@ def main():
                 'optimizer' : optimizer.state_dict(),
             }, is_best, checkpoint=args.checkpoint)
 
+        # activations trace
+        ## it's not clear should do this for training or for testing. Chang did for test.
+        hooker.output() # record norms for analyses
+
+        if args.grow:
+            trigger.feed(hooker) # feed trigger
+            triggered = trigger.triggered()
+            if triggered:
+                # l is the actual name, starts from 1
+                for l in triggered:
+                    multipliers[l-1] *= 2
+                    if multipliers[l-1] > 8:
+                        warnings.warn('Multiplier too large! Intend for %i blocks in layer %i. Forbid this!' % (multipliers[l-1]*3, l))
+                        triggered.remove(l)
+                        # raise RuntimeError('Multiplier too large!')
+                print('multipliers', multipliers)
+
+                if triggered:
+                    # update state dict
+                    state_dict = model.state_dict() # using module to save the "module" overhead
+                    for l in triggered:
+                        state_dict = StateDictTools.duplicate_layer(state_dict, l)
+
+                    # update model
+                    if not args.arch.startswith('resnet'):
+                        raise KeyError("model not supported for duplicate")
+                    model = models.__dict__[args.arch](num_classes=num_classes,
+                                                       depth=args.depth,
+                                                       block_name=args.block_name,
+                                                       grow_multipliers = multipliers)
+                    print(model)
+                    if use_cuda:
+                        model.cuda()
+
+                    # load state dict to new model
+                    model.load_state_dict(state_dict, strict=True)
+                    print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
+
+                    # update optimizer
+                    optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
+
+                    # reset hooker
+                    hooker = ModelHooker(model, args.checkpoint)
+
+                    # reset trigger, retain history of other layers
+                    # no need to reset trigger, modify history flexibly
+                    trigger.set_names(hooker)
+
+
     hooker.close()
+    if args.grow:
+        trigger.close()
     logger.close()
     logger.plot()
     savefig(os.path.join(args.checkpoint, 'log.eps'))
@@ -242,7 +328,7 @@ def main():
     print('Best acc:')
     print(best_acc)
 
-def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
+def train(trainloader, model, criterion, optimizer, epoch, use_cuda, test_len=None):
     # switch to train mode
     model.train()
 
@@ -253,8 +339,14 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     top5 = AverageMeter()
     end = time.time()
 
-    bar = Bar('Processing', max=len(trainloader))
+    if test_len:
+        bar = Bar('Processing', max=test_len)
+    else:
+        bar = Bar('Processing', max=len(trainloader))
     for batch_idx, (inputs, targets) in enumerate(trainloader):
+        if test_len:
+            if batch_idx >= test_len:
+                break
         # measure data loading time
         data_time.update(time.time() - end)
 

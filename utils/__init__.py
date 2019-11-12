@@ -5,6 +5,8 @@ from .logger import *
 from .visualize import *
 from .eval import *
 from .hooker import *
+from .trigger import *
+from .torch_extensions import *
 
 # progress bar
 import os, sys
