@@ -7,11 +7,11 @@ import statistics
 
 __all__ = ['Trigger']
 
-#todo after doubled, hooker needs to be reset
-
-
 class Trigger(object):
     def __init__(self, hooker, smooth='median', lastn=5, thresh=1.1):
+        """
+            todo: pass in errs only, infer structures
+        """
 
         if smooth == 'median':
             self.smooth = statistics.median
@@ -26,21 +26,8 @@ class Trigger(object):
         self.history = [[[] for _ in range(len(layer)-1)] for layer in hooker]
         self.baseErrs = [[] for layer in hooker]
 
-        fpath = os.path.join(hooker.dpath, 'Truncated_err.txt')
-        self.logger = Logger(fpath)
-        names = ['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)]
-        self.logger.set_names(names)
-
-    def set_names(self, hooker):
-        names = ['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)]
-        self.logger.set_names(names)
-
-    def feed(self, hooker):
-        errs = hooker.draw_errs()
+    def feed(self, errs):
         assert len(errs) == len(self.history), "err: %i, history: %i" % (len(errs), len(self.history))
-
-        print(errs)
-        self.logger.append([e for l in errs for e in l])
 
         # merge into history, and if exceeds capacity, dequeue
         for l, layer in enumerate(errs):
@@ -62,11 +49,13 @@ class Trigger(object):
                 for e, errs in enumerate(layer):
                     self.baseErrs[l].append(self.smooth(errs))
 
+        return self.triggered()
+
     def triggered(self):
         layerDouble = []
         for l, layer in enumerate(self.history):
             if not self.baseErrs[l]:
-                # history in short to set base
+                # err base not yet set
                 continue
             for b, errs in enumerate(layer):
                 # print(self.baseErrs, l, b)

@@ -9,9 +9,9 @@
 model="resnet"
 depth=20
 grow=true
-epochs=164 # 100
+epochs=164
 schedule=(200 300) # fix this later
-gpu_id=1
+gpu_id=2
 log_file="train.out"
 
 if [ "$grow" = true ]; then
@@ -26,7 +26,7 @@ while [ -d $checkpoint ]; do
     read -p "Checkpoint path $checkpoint already exists. Delete[d], Rename[r], Continue[c] or Terminate[t]? " ans
     case $ans in
 	d ) rm -rf $checkpoint; break;;
-	r ) checkpoint=$checkpoint"_"$i;;
+	r ) checkpoint=${checkpoint%%_*}"_"$i;;
 	c ) log_file="resume.out"; break;;
 	* ) exit;;
     esac

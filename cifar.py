@@ -194,12 +194,6 @@ def main():
     print(model)
     print("     ----------------------------------------------------------------------")
 
-    # hooker = LayerHooker(model.layer1, args.checkpoint)
-    hooker = ModelHooker(model, args.checkpoint)
-    if args.grow:
-        trigger = Trigger(hooker, lastn=args.lastn, thresh=args.threshold) # test
-    multipliers = [1,1,1] # initial multiplier, should be fixed
-
     if use_cuda:
         # model = torch.nn.DataParallel(model).cuda()
         model.cuda()
@@ -216,6 +210,7 @@ def main():
     print("     Learning rate schedule: ", args.schedule)
     print("     Learning rate decay factor: %g" % args.gamma)
     if args.grow:
+        multipliers = [1,1,1] # initial multiplier, should be fixed
         print("     --------------------------- growth ----------------------------------")
         print("     Initial multiplier: ", multipliers)
         print("     err threshold: %g" % args.threshold)
@@ -239,7 +234,19 @@ def main():
         logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title)
         logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
+    # model hooker
+    hooker = ModelHooker(model, args.checkpoint)
+    # truncated err logger
+    err_logger = Logger(os.path.join(args.checkpoint, 'Truncated_err.txt'))
+    err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
 
+    # grow
+    if args.grow:
+        trigger = Trigger(hooker, lastn=args.lastn, thresh=args.threshold) # test
+        grow_logger = Logger(os.path.join(args.checkpoint, 'grow.txt'), title=title)
+        grow_logger.set_names(['epoch', 'multiplier-1', 'multiplier-2', 'multiplier-3'])
+
+    # evaluation mode
     if args.evaluate:
         print('\nEvaluation only')
         test_loss, test_acc = test(testloader, model, criterion, start_epoch, use_cuda)
@@ -272,24 +279,30 @@ def main():
         # activations trace
         ## it's not clear should do this for training or for testing. Chang did for test.
         hooker.output() # record norms for analyses
+        errs = hooker.draw_errs()
+        err_logger.append([e for l in errs for e in l])
 
         if args.grow:
-            trigger.feed(hooker) # feed trigger
-            triggered = trigger.triggered()
+            grow_logger.append([epoch, *multipliers])
+            triggered = trigger.feed(errs) # feed trigger with truncated errs
             if triggered:
                 # l is the actual name, starts from 1
+                duplicate_layers = []
                 for l in triggered:
-                    multipliers[l-1] *= 2
-                    if multipliers[l-1] > 8:
-                        warnings.warn('Multiplier too large! Intend for %i blocks in layer %i. Forbid this!' % (multipliers[l-1]*3, l))
-                        triggered.remove(l)
-                        # raise RuntimeError('Multiplier too large!')
-                print('multipliers', multipliers)
+                    if multipliers[l-1] * 2 > 8:
+                        warnings.warn('Multiplier too large! Intend for %i blocks in layer %i. Forbid this!' % (multipliers[l-1] * 2, l))
+                        continue
+                    # make sure the below two are consistent
+                    duplicate_layers.append(l) # for update state dict
+                    multipliers[l-1] *= 2 # for update model
 
-                if triggered:
+                if duplicate_layers:
+                    print('duplicate layers: ', duplicate_layers)
+                    print('multipliers', multipliers)
+
                     # update state dict
                     state_dict = model.state_dict() # using module to save the "module" overhead
-                    for l in triggered:
+                    for l in duplicate_layers:
                         state_dict = StateDictTools.duplicate_layer(state_dict, l)
 
                     # update model
@@ -315,12 +328,16 @@ def main():
 
                     # reset trigger, retain history of other layers
                     # no need to reset trigger, modify history flexibly
-                    trigger.set_names(hooker)
+
+                    # reset truncated err logger
+                    err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
 
 
     hooker.close()
+    err_logger.close()
     if args.grow:
         trigger.close()
+        grow_logger.close()
     logger.close()
     logger.plot()
     savefig(os.path.join(args.checkpoint, 'log.eps'))
