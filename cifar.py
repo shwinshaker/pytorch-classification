@@ -22,7 +22,7 @@ import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from utils import ModelHooker, Trigger
-from utils import StateDictTools
+from utils import StateDictTools, ModelArch, ChunkSampler
 from utils import str2bool
 
 import warnings
@@ -69,7 +69,7 @@ parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet20',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet18)')
-parser.add_argument('--depth', type=int, default=29, help='Model depth.')
+parser.add_argument('--depth', type=int, default=20, help='Model depth.')
 parser.add_argument('--block-name', type=str, default='BasicBlock',
                     help='the building block for Resnet and Preresnet: BasicBlock, Bottleneck (default: Basicblock for cifar10/cifar100)')
 parser.add_argument('--cardinality', type=int, default=8, help='Model cardinality (group).')
@@ -77,6 +77,7 @@ parser.add_argument('--widen-factor', type=int, default=4, help='Widen factor. 4
 parser.add_argument('--growthRate', type=int, default=12, help='Growth rate for DenseNet.')
 parser.add_argument('--compressionRate', type=int, default=2, help='Compression Rate (theta) for DenseNet.')
 # Miscs
+parser.add_argument('--debug-batch-size', type=int, default=0, help='number of training batches for quick check. default: 0 - no debug')
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -86,8 +87,14 @@ parser.add_argument('--gpu-id', default='0', type=str,
 
 #growth
 parser.add_argument('--grow', type=str2bool, const=True, default=False, nargs='?', help='Let us grow!')
-parser.add_argument('--lastn', type=int, default=5, help='Smooth scope of truncated err estimation')
-parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger threshold for growing')
+parser.add_argument('--mode', type=str, choices=['adapt', 'fixed'], default='adapt', help='The growing mode: adaptive to errs, or fixed at some epochs')
+# todo
+# parser.add_argument('--grow-mode', help='blockwise, layerwise or modelwise duplicate?')
+parser.add_argument('--grow-epoch', type=int, nargs='+', default=[60, 110], help='Duplicate the model at these epochs. Required if mode = fixed.')
+parser.add_argument('--max-depth', type=int, default=74, help='Max model depth. Required if mode = adapt.')
+parser.add_argument('--window', type=int, default=5, help='Smooth scope of truncated err estimation. Required if mode = adapt.')
+parser.add_argument('--backtrack', type=int, default=20, help='History that base err tracked back to.  Required if mode = adapt.')
+parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger threshold for growing.  Required if mode = adapt.')
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -110,10 +117,10 @@ torch.manual_seed(args.manualSeed)
 if use_cuda:
     torch.cuda.manual_seed_all(args.manualSeed)
 
-best_acc = 0  # best test accuracy
+best_val_acc = 0  # best test accuracy
 
 def main():
-    global best_acc
+    global best_val_acc
     start_epoch = args.start_epoch  # start from epoch 0 or last checkpoint epoch
 
     if not os.path.isdir(args.checkpoint):
@@ -141,12 +148,23 @@ def main():
         dataloader = datasets.CIFAR100
         num_classes = 100
 
-
-    trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
-    trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
-
+    # test set size: 10,000
     testset = dataloader(root='./data', train=False, download=False, transform=transform_test)
     testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+
+    # training set size: 50,000 - 10,000 = 40,000
+    trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
+    valset = data.Subset(trainset, range(len(trainset)-len(testset), len(trainset)))
+    trainset = data.Subset(trainset, range(len(trainset)-len(testset)))
+    trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers) 
+    # trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers, sampler=ChunkSampler(len(trainset)-len(testset), 0))
+
+    # validation set size: 10,000
+    # validate set chunk from training set (train=True), but apply test transform, i.e. no augmentation
+    # valset = dataloader(root='./data', train=True, download=True, transform=transform_test)[50000:]
+    # valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers, sampler=ChunkSampler(len(testset), len(trainset)-len(testset)))
+    valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+
 
     # Model
     print("==> creating model '{}'".format(args.arch))
@@ -209,13 +227,26 @@ def main():
     print("     Weight decay: %g" % args.weight_decay)
     print("     Learning rate schedule: ", args.schedule)
     print("     Learning rate decay factor: %g" % args.gamma)
+    print("     gpu id: %s" % args.gpu_id)
+    print("     --------------------------- model ----------------------------------")
+    print("     Model: %s" % args.arch)
+    print("     depth: %i" % args.depth)
     if args.grow:
-        multipliers = [1,1,1] # initial multiplier, should be fixed
+        if not args.arch.startswith('resnet'):
+            raise KeyError("model not supported for growing yet.")
         print("     --------------------------- growth ----------------------------------")
-        print("     Initial multiplier: ", multipliers)
-        print("     err threshold: %g" % args.threshold)
-        print("     smoothing scope: %i" % args.lastn)
-        print("     ---------------------------------------------------------------------")
+        print("     grow mode: %s" % args.mode)
+        if args.mode == 'fixed':
+            print("     duplicate model at epoch: ", args.grow_epoch)
+        else:
+            print("     max-depth: %i" % args.max_depth)
+            print("     err threshold: %g" % args.threshold)
+            print("     smoothing scope: %i" % args.window)
+            print("     err back track history: %i" % args.backtrack)
+    if args.debug_batch_size:
+        print("     -------------------------- debug ------------------------------------")
+        print("     debug batches: %i" % args.debug_batch_size)
+    print("     ---------------------------------------------------------------------")
 
     # Resume
     title = 'cifar-10-' + args.arch
@@ -225,7 +256,7 @@ def main():
         assert os.path.isfile(args.resume), 'Error: no checkpoint directory found!'
         args.checkpoint = os.path.dirname(args.resume)
         checkpoint = torch.load(args.resume)
-        best_acc = checkpoint['best_acc']
+        best_val_acc = checkpoint['best_val_acc']
         start_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -236,15 +267,16 @@ def main():
 
     # model hooker
     hooker = ModelHooker(model, args.checkpoint)
-    # truncated err logger
-    err_logger = Logger(os.path.join(args.checkpoint, 'Truncated_err.txt'))
-    err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
+    modelArch = ModelArch(args.arch, args.depth, args.max_depth, dpath=args.checkpoint) # args.arch isn't actually used
+    # truncated err logger - include this in hooker's history
+    # err_logger = Logger(os.path.join(args.checkpoint, 'Truncated_err.txt'))
+    # err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
+    timeLogger = Logger(os.path.join(args.checkpoint, 'timer.txt'), title=title)
+    timeLogger.set_names(['epoch', 'training-time(min)'])
 
     # grow
-    if args.grow:
-        trigger = Trigger(hooker, lastn=args.lastn, thresh=args.threshold) # test
-        grow_logger = Logger(os.path.join(args.checkpoint, 'grow.txt'), title=title)
-        grow_logger.set_names(['epoch', 'multiplier-1', 'multiplier-2', 'multiplier-3'])
+    if args.grow and args.mode == 'adapt':
+        trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
 
     # evaluation mode
     if args.evaluate:
@@ -257,95 +289,144 @@ def main():
     for epoch in range(start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
 
-        print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
+        # count the training time only
+        end = time.time()
+        train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
+        timeLogger.append([epoch, (time.time() - end)/60])
 
-        train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda, test_len=None)
-        test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda)
+        val_loss, val_acc = test(valloader, model, criterion, epoch, use_cuda)
+
+        print('\nEpoch: [%d | %d] LR: %f Train-Loss: %.4f Val-Loss: %.4f Train-Acc: %.4f Val-Acc: %.4f' % (epoch + 1, args.epochs, state['lr'], train_loss, val_loss, train_acc, val_acc))
 
         # append logger file
-        logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])
+        logger.append([state['lr'], train_loss, val_loss, train_acc, val_acc])
 
         # save model
-        is_best = test_acc > best_acc
-        best_acc = max(test_acc, best_acc)
+        is_best = val_acc > best_val_acc
+        best_val_acc = max(val_acc, best_val_acc)
         save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
-                'acc': test_acc,
-                'best_acc': best_acc,
+                'acc': val_acc,
+                'best_val_acc': best_val_acc,
                 'optimizer' : optimizer.state_dict(),
             }, is_best, checkpoint=args.checkpoint)
 
         # activations trace
         ## it's not clear should do this for training or for testing. Chang did for test.
-        hooker.output() # record norms for analyses
-        errs = hooker.draw_errs()
-        err_logger.append([e for l in errs for e in l])
+        # hooker.output() # record norms for analyses, now implicitly record
+        modelArch.update(epoch, is_best, model)
+        errs = hooker.draw(archs=modelArch.arch, output=True)
+        # err_logger.append([e for l in errs for e in l])
 
         if args.grow:
-            grow_logger.append([epoch, *multipliers])
-            triggered = trigger.feed(errs) # feed trigger with truncated errs
-            if triggered:
-                # l is the actual name, starts from 1
-                duplicate_layers = []
-                for l in triggered:
-                    if multipliers[l-1] * 2 > 8:
-                        warnings.warn('Multiplier too large! Intend for %i blocks in layer %i. Forbid this!' % (multipliers[l-1] * 2, l))
-                        continue
-                    # make sure the below two are consistent
-                    duplicate_layers.append(l) # for update state dict
-                    multipliers[l-1] *= 2 # for update model
-
-                if duplicate_layers:
-                    print('duplicate layers: ', duplicate_layers)
-                    print('multipliers', multipliers)
-
-                    # update state dict
-                    state_dict = model.state_dict() # using module to save the "module" overhead
-                    for l in duplicate_layers:
-                        state_dict = StateDictTools.duplicate_layer(state_dict, l)
-
-                    # update model
-                    if not args.arch.startswith('resnet'):
-                        raise KeyError("model not supported for duplicate")
+            if args.mode == 'fixed':
+                if epoch in args.grow_epoch:
+                    modelArch.duplicate_model(limit=False)
+                    state_dict = StateDictTools.duplicate_model(model.state_dict())
                     model = models.__dict__[args.arch](num_classes=num_classes,
-                                                       depth=args.depth,
                                                        block_name=args.block_name,
-                                                       grow_multipliers = multipliers)
-                    print(model)
+                                                       archs = modelArch.arch)
                     if use_cuda:
                         model.cuda()
 
-                    # load state dict to new model
                     model.load_state_dict(state_dict, strict=True)
+                    optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
+                    hooker = ModelHooker(model, args.checkpoint, resume=True)
+
                     print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
 
-                    # update optimizer
-                    optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
+            elif args.mode == 'adapt':
+                # propose block duplicate by err control
+                duplicate_blocks = trigger.feed(errs) # feed trigger with truncated errs
+                if duplicate_blocks:
+                    # try duplicate it to see if any layer exceeds upper limit
+                    duplicate_blocks =  modelArch.duplicate_blocks(duplicate_blocks)
+                    if duplicate_blocks:
 
-                    # reset hooker
-                    hooker = ModelHooker(model, args.checkpoint)
+                    # l is the actual name, starts from 1
+                    # duplicate_blocks = []
+                    # for l in triggered:
+                        # if multipliers[l-1] * 2 > 8:
+                        #     warnings.warn('Multiplier too large! Intend for %i blocks in layer %i. Forbid this!' % (multipliers[l-1] * 2, l))
+                        #     continue
+                        # # make sure the below two are consistent
+                        # duplicate_layers.append(l) # for update state dict
+                        # multipliers[l-1] *= 2 # for update model
 
-                    # reset trigger, retain history of other layers
-                    # no need to reset trigger, modify history flexibly
+                    # if duplicate_layers:
+                        # print('duplicate layers: ', duplicate_layers)
+                        print('duplicate blocks: ', duplicate_blocks)
+                        print('New archs: %s' % modelArch)
 
-                    # reset truncated err logger
-                    err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
+                        # update state dict
+                        state_dict = StateDictTools.duplicate_blocks(model.state_dict(), duplicate_blocks)
 
+                        # update model - todo
+                        # modelArch.duplicate_blocks(duplicate_blocks)
+                        model = models.__dict__[args.arch](num_classes=num_classes,
+                                                           # depth=args.depth,
+                                                           block_name=args.block_name,
+                                                           archs = modelArch.arch)
+                        # print(modelArch.arch)
+                        # model = models.__dict__[args.arch](num_classes=num_classes,
+                        #                                    depth=args.depth,
+                        #                                    block_name=args.block_name,
+                        #                                    grow_multipliers = multipliers)
+                        # print(model)
+                        if use_cuda:
+                            model.cuda()
+
+                        # load state dict to new model
+                        model.load_state_dict(state_dict, strict=True)
+                        print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
+
+                        # update optimizer
+                        optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
+
+                        # reset hooker
+                        hooker = ModelHooker(model, args.checkpoint, resume=True)
+
+                        # update history shape in trigger
+                        trigger.update(duplicate_blocks)
+
+                        # reset trigger, retain history of other layers
+                        # no need to reset trigger, modify history flexibly
+
+                        # reset truncated err logger
+                        # err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
+            else:
+                raise KeyError('Grow mode %s not supported!' % args.mode)
 
     hooker.close()
-    err_logger.close()
-    if args.grow:
+    modelArch.close()
+    timeLogger.close()
+    # err_logger.close()
+    if args.grow and args.mode == 'adapt':
         trigger.close()
-        grow_logger.close()
     logger.close()
-    logger.plot()
-    savefig(os.path.join(args.checkpoint, 'log.eps'))
+    # logger.plot()
+    # savefig(os.path.join(args.checkpoint, 'log.eps'))
 
-    print('Best acc:')
-    print(best_acc)
+    print('\nBest val acc: %.4f' % best_val_acc) # this is the validation acc
 
-def train(trainloader, model, criterion, optimizer, epoch, use_cuda, test_len=None):
+    test_loss, test_acc = test(testloader, model, criterion, -1, use_cuda)
+    print('Final arch: %s' % modelArch)
+    print('Final Test Loss:  %.4f, Final Test Acc:  %.4f' % (test_loss, test_acc))
+
+    best_checkpoint = torch.load(os.path.join(args.checkpoint, 'model_best.pth.tar'))
+    best_model = models.__dict__[args.arch](num_classes=num_classes,
+                                            block_name=args.block_name,
+                                            archs = modelArch.best_arch)
+    if use_cuda:
+        best_model.cuda()
+    best_model.load_state_dict(best_checkpoint['state_dict'])
+    test_loss, test_acc = test(testloader, best_model, criterion, -1, use_cuda)
+    print('Best arch: %s' % modelArch.__str__(best=True))
+    print('Best Test Loss:  %.4f, Best Test Acc:  %.4f' % (test_loss, test_acc))
+
+
+def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     # switch to train mode
     model.train()
 
@@ -356,13 +437,13 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda, test_len=No
     top5 = AverageMeter()
     end = time.time()
 
-    if test_len:
-        bar = Bar('Processing', max=test_len)
+    if args.debug_batch_size:
+        bar = Bar('Processing', max=args.debug_batch_size)
     else:
         bar = Bar('Processing', max=len(trainloader))
     for batch_idx, (inputs, targets) in enumerate(trainloader):
-        if test_len:
-            if batch_idx >= test_len:
+        if args.debug_batch_size:
+            if batch_idx >= args.debug_batch_size:
                 break
         # measure data loading time
         data_time.update(time.time() - end)
@@ -410,7 +491,10 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda, test_len=No
     return (losses.avg, top1.avg)
 
 def test(testloader, model, criterion, epoch, use_cuda):
-    global best_acc
+    '''
+        `epoch` is never used
+    '''
+    global best_val_acc
 
     batch_time = AverageMeter()
     data_time = AverageMeter()
