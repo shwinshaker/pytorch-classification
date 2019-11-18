@@ -21,8 +21,8 @@ import torchvision.datasets as datasets
 import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
-from utils import ModelHooker, Trigger
-from utils import StateDictTools, ModelArch, ChunkSampler
+from utils import ModelHooker, Trigger, MinTrigger
+from utils import StateDict, ModelArch, ChunkSampler
 from utils import str2bool
 
 import warnings
@@ -51,7 +51,7 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--drop', '--dropout', default=0, type=float,
                     metavar='Dropout', help='Dropout ratio')
-parser.add_argument('--schedule', type=int, nargs='+', default=[150, 225],
+parser.add_argument('--schedule', type=int, nargs='+', default=[81, 122],
                         help='Decrease learning rate at these epochs.')
 parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
@@ -89,11 +89,14 @@ parser.add_argument('--gpu-id', default='0', type=str,
 parser.add_argument('--grow', type=str2bool, const=True, default=False, nargs='?', help='Let us grow!')
 parser.add_argument('--mode', type=str, choices=['adapt', 'fixed'], default='adapt', help='The growing mode: adaptive to errs, or fixed at some epochs')
 # todo
-# parser.add_argument('--grow-mode', help='blockwise, layerwise or modelwise duplicate?')
+parser.add_argument('--grow-atom', type=str, choices=['block', 'layer', 'model'], default='block', help='blockwise, layerwise or modelwise?')
+parser.add_argument('--err-atom', type=str, choices=['block', 'layer', 'model'], default='block', help='Measure errs in block, layer or model level?')
+parser.add_argument('--grow-operation', type=str, choices=['duplicate', 'plus'], default='duplicate', help='duplicate or plus?')
+parser.add_argument('--err-control', type=str, choices=['acc', 'acc-res', 'res', 'res-act', 'implicit-euler'], default='acc', help='err control strategy.')
 parser.add_argument('--grow-epoch', type=int, nargs='+', default=[60, 110], help='Duplicate the model at these epochs. Required if mode = fixed.')
 parser.add_argument('--max-depth', type=int, default=74, help='Max model depth. Required if mode = adapt.')
-parser.add_argument('--window', type=int, default=5, help='Smooth scope of truncated err estimation. Required if mode = adapt.')
-parser.add_argument('--backtrack', type=int, default=20, help='History that base err tracked back to.  Required if mode = adapt.')
+parser.add_argument('--window', type=int, default=3, help='Smooth scope of truncated err estimation. Required if mode = adapt.')
+parser.add_argument('--backtrack', type=int, default=30, help='History that base err tracked back to.  Required if mode = adapt.')
 parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger threshold for growing.  Required if mode = adapt.')
 
 args = parser.parse_args()
@@ -101,6 +104,7 @@ state = {k: v for k, v in args._get_kwargs()}
 
 # Validate dataset
 assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
+assert args.backtrack > args.window, 'backtrack should at least greater than window size.'
 
 # Use CUDA
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
@@ -236,9 +240,13 @@ def main():
             raise KeyError("model not supported for growing yet.")
         print("     --------------------------- growth ----------------------------------")
         print("     grow mode: %s" % args.mode)
+        print("     grow atom: %s" % args.grow_atom)
+        print("     err atom: %s" % args.err_atom)
+        print("     grow operation: %s" % args.grow_operation)
         if args.mode == 'fixed':
             print("     duplicate model at epoch: ", args.grow_epoch)
         else:
+            print("     err control: %s" % args.err_control)
             print("     max-depth: %i" % args.max_depth)
             print("     err threshold: %g" % args.threshold)
             print("     smoothing scope: %i" % args.window)
@@ -267,7 +275,8 @@ def main():
 
     # model hooker
     hooker = ModelHooker(model, args.checkpoint)
-    modelArch = ModelArch(args.arch, args.depth, args.max_depth, dpath=args.checkpoint) # args.arch isn't actually used
+    modelArch = ModelArch(args.arch, model, args.depth, args.max_depth, dpath=args.checkpoint) # args.arch isn't actually used
+    # stateDict = StateDict(model)
     # truncated err logger - include this in hooker's history
     # err_logger = Logger(os.path.join(args.checkpoint, 'Truncated_err.txt'))
     # err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
@@ -276,7 +285,8 @@ def main():
 
     # grow
     if args.grow and args.mode == 'adapt':
-        trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
+        # trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
+        trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.err_atom) # test
 
     # evaluation mode
     if args.evaluate:
@@ -314,87 +324,62 @@ def main():
 
         # activations trace
         ## it's not clear should do this for training or for testing. Chang did for test.
-        # hooker.output() # record norms for analyses, now implicitly record
         modelArch.update(epoch, is_best, model)
-        errs = hooker.draw(archs=modelArch.arch, output=True)
-        # err_logger.append([e for l in errs for e in l])
+        # stateDict.update(epoch, is_best, model)
+        errs = hooker.draw(epoch, archs=modelArch.arch, atom=args.err_atom, scale=True)
 
         if args.grow:
             if args.mode == 'fixed':
+                # existed method
                 if epoch in args.grow_epoch:
-                    modelArch.duplicate_model(limit=False)
-                    state_dict = StateDictTools.duplicate_model(model.state_dict())
+                    modelArch.grow(grow_atom='model', input_atom='model', operation='duplicate', limit=False)
                     model = models.__dict__[args.arch](num_classes=num_classes,
                                                        block_name=args.block_name,
                                                        archs = modelArch.arch)
                     if use_cuda:
                         model.cuda()
+                    # stateDict.grow(operation='duplicate')
 
-                    model.load_state_dict(state_dict, strict=True)
+                    model.load_state_dict(stateDict.state_dict, strict=True)
                     optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                    hooker = ModelHooker(model, args.checkpoint, resume=True)
-
-                    print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
+                    # hooker = ModelHooker(model, args.checkpoint, resume=True)
+                    hooker.reset(model)
 
             elif args.mode == 'adapt':
-                # propose block duplicate by err control
-                duplicate_blocks = trigger.feed(errs) # feed trigger with truncated errs
-                if duplicate_blocks:
+                # propose candidate blocks by truncated errs of each residual block
+                trigger.feed(errs) 
+                err_indices = trigger.trigger() 
+                if err_indices:
                     # try duplicate it to see if any layer exceeds upper limit
-                    duplicate_blocks =  modelArch.duplicate_blocks(duplicate_blocks)
-                    if duplicate_blocks:
+                    err_indices = modelArch.grow(indices=err_indices, grow_atom=args.grow_atom, input_atom=args.err_atom, operation=args.grow_operation) # 'plus'
+                    if err_indices:
 
-                    # l is the actual name, starts from 1
-                    # duplicate_blocks = []
-                    # for l in triggered:
-                        # if multipliers[l-1] * 2 > 8:
-                        #     warnings.warn('Multiplier too large! Intend for %i blocks in layer %i. Forbid this!' % (multipliers[l-1] * 2, l))
-                        #     continue
-                        # # make sure the below two are consistent
-                        # duplicate_layers.append(l) # for update state dict
-                        # multipliers[l-1] *= 2 # for update model
-
-                    # if duplicate_layers:
-                        # print('duplicate layers: ', duplicate_layers)
-                        print('duplicate blocks: ', duplicate_blocks)
+                        print('growed module indices: ', err_indices)
                         print('New archs: %s' % modelArch)
 
                         # update state dict
-                        state_dict = StateDictTools.duplicate_blocks(model.state_dict(), duplicate_blocks)
+                        '''
+                            have to integrate stateDict into modelarchitecture
+                            such that do not have to check grow_atom and input_atom twice
+                        '''
 
-                        # update model - todo
-                        # modelArch.duplicate_blocks(duplicate_blocks)
+                        # stateDict.grow(err_indices, operation=args.grow_operation, atom=args.err_atom, grow_atom=args.grow_atom)
+
                         model = models.__dict__[args.arch](num_classes=num_classes,
-                                                           # depth=args.depth,
                                                            block_name=args.block_name,
                                                            archs = modelArch.arch)
-                        # print(modelArch.arch)
-                        # model = models.__dict__[args.arch](num_classes=num_classes,
-                        #                                    depth=args.depth,
-                        #                                    block_name=args.block_name,
-                        #                                    grow_multipliers = multipliers)
-                        # print(model)
                         if use_cuda:
                             model.cuda()
-
-                        # load state dict to new model
-                        model.load_state_dict(state_dict, strict=True)
-                        print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
-
-                        # update optimizer
+                        model.load_state_dict(stateDict.state_dict, strict=True)
                         optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-
-                        # reset hooker
-                        hooker = ModelHooker(model, args.checkpoint, resume=True)
+                        # hooker = ModelHooker(model, args.checkpoint, resume=True)
+                        hooker.reset(model)
 
                         # update history shape in trigger
-                        trigger.update(duplicate_blocks)
-
-                        # reset trigger, retain history of other layers
-                        # no need to reset trigger, modify history flexibly
-
-                        # reset truncated err logger
-                        # err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
+                        '''
+                            min trigger only supports layer indices currently!
+                        '''
+                        trigger.update(err_indices)
             else:
                 raise KeyError('Grow mode %s not supported!' % args.mode)
 

@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.init as init
 from torch.autograd import Variable
 
-__all__ = ['get_mean_and_std', 'init_params', 'mkdir_p', 'AverageMeter', 'str2bool']
+__all__ = ['get_mean_and_std', 'init_params', 'mkdir_p', 'AverageMeter', 'str2bool', 'reduce_list']
 
 
 def get_mean_and_std(dataset):
@@ -67,6 +67,34 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
+
+def is_double_list(li):
+    if not li:
+        return False
+    if any([isinstance(e, list) for e in li]):
+        return True
+    return False
+
+def reduce_list(li, order=1):
+    '''
+        reduce the extra bracket
+        E.g. [1, [2,3], 4] -> [1, 2, 3, 4]
+        E.g. [[1], [[2,3],[]], [4]] -> [[1], [2,3], [], [4]]
+    '''
+    if order == 1:
+        check = lambda e: isinstance(e, list)
+    elif order == 2:
+        check = is_double_list
+    else:
+        raise KeyError('order not defined! %i' % order)
+    li_ = []
+    for l in li:
+        if check(l):
+            li_.extend(l)
+        else:
+            li_.append(l)
+    return li_
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value
