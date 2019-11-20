@@ -141,6 +141,7 @@ class ModelHooker(object):
             norms.append([act_norms, res_norms, acc_norms])
             err_norms.append(acc_norms)
         avg_err_norms = [statistics.mean(errs) for errs in err_norms]
+        avg_avg_err_norms = statistics.mean([e for errs in err_norms for e in errs])
 
         self.history_norm.append(norms)
         self.logger.append([epoch, *avg_err_norms])
@@ -149,6 +150,8 @@ class ModelHooker(object):
             return err_norms
         elif atom == 'layer':
             return avg_err_norms
+        elif atom == 'model':
+            return avg_avg_err_norms
         else:
             raise KeyError('atom %s not supported!' % atom)
 

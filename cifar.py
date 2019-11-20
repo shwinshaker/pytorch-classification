@@ -92,7 +92,6 @@ parser.add_argument('--mode', type=str, choices=['adapt', 'fixed'], default='ada
 parser.add_argument('--grow-atom', type=str, choices=['block', 'layer', 'model'], default='block', help='blockwise, layerwise or modelwise?')
 parser.add_argument('--err-atom', type=str, choices=['block', 'layer', 'model'], default='block', help='Measure errs in block, layer or model level?')
 parser.add_argument('--grow-operation', type=str, choices=['duplicate', 'plus'], default='duplicate', help='duplicate or plus?')
-parser.add_argument('--err-control', type=str, choices=['acc', 'acc-res', 'res', 'res-act', 'implicit-euler'], default='acc', help='err control strategy.')
 parser.add_argument('--grow-epoch', type=int, nargs='+', default=[60, 110], help='Duplicate the model at these epochs. Required if mode = fixed.')
 parser.add_argument('--max-depth', type=int, default=74, help='Max model depth. Required if mode = adapt.')
 parser.add_argument('--window', type=int, default=3, help='Smooth scope of truncated err estimation. Required if mode = adapt.')
@@ -101,6 +100,14 @@ parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger th
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
+
+# sanity check
+if args.mode == 'fixed':
+    assert args.grow_atom == 'model', 'require model level grow for fixed!'
+    assert args.grow_operation == 'duplicate', 'require duplicate operation for fixed'
+
+if args.mode == 'adapt':
+    assert args.max_depth, 'require max depth for adaptive mode'
 
 # Validate dataset
 assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
@@ -241,16 +248,15 @@ def main():
         print("     --------------------------- growth ----------------------------------")
         print("     grow mode: %s" % args.mode)
         print("     grow atom: %s" % args.grow_atom)
-        print("     err atom: %s" % args.err_atom)
         print("     grow operation: %s" % args.grow_operation)
         if args.mode == 'fixed':
             print("     duplicate model at epoch: ", args.grow_epoch)
         else:
-            print("     err control: %s" % args.err_control)
-            print("     max-depth: %i" % args.max_depth)
+            print("     err atom: %s" % args.err_atom)
             print("     err threshold: %g" % args.threshold)
-            print("     smoothing scope: %i" % args.window)
-            print("     err back track history: %i" % args.backtrack)
+            print("     max depth: %i" % args.max_depth)
+            print("     smoothing scope (deprecated): %i" % args.window)
+            print("     err back track history (deprecated): %i" % args.backtrack)
     if args.debug_batch_size:
         print("     -------------------------- debug ------------------------------------")
         print("     debug batches: %i" % args.debug_batch_size)
@@ -275,18 +281,15 @@ def main():
 
     # model hooker
     hooker = ModelHooker(model, args.checkpoint)
-    modelArch = ModelArch(args.arch, model, args.depth, args.max_depth, dpath=args.checkpoint) # args.arch isn't actually used
+    modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom) # args.arch isn't actually used
     # stateDict = StateDict(model)
-    # truncated err logger - include this in hooker's history
-    # err_logger = Logger(os.path.join(args.checkpoint, 'Truncated_err.txt'))
-    # err_logger.set_names(['err(%i-%i)' % (l, b) for l, h in enumerate(hooker.layerHookers) for b in range(len(h)-1)])
     timeLogger = Logger(os.path.join(args.checkpoint, 'timer.txt'), title=title)
     timeLogger.set_names(['epoch', 'training-time(min)'])
 
     # grow
     if args.grow and args.mode == 'adapt':
         # trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
-        trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.err_atom) # test
+        trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.grow_atom, err_atom=args.err_atom) # test
 
     # evaluation mode
     if args.evaluate:
@@ -303,6 +306,8 @@ def main():
         end = time.time()
         train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
         timeLogger.append([epoch, (time.time() - end)/60])
+
+        errs = hooker.draw(epoch, archs=modelArch.arch, atom=args.err_atom, scale=True)
 
         val_loss, val_acc = test(valloader, model, criterion, epoch, use_cuda)
 
@@ -324,61 +329,51 @@ def main():
 
         # activations trace
         ## it's not clear should do this for training or for testing. Chang did for test.
+        '''
+            try it for training set?
+        '''
         modelArch.update(epoch, is_best, model)
-        # stateDict.update(epoch, is_best, model)
-        errs = hooker.draw(epoch, archs=modelArch.arch, atom=args.err_atom, scale=True)
+        # state dict is updated for this step: updated by the newly trained weights
+        # model arch is not updated, it will update along with grow
+        # errs = hooker.draw(epoch, archs=modelArch.arch, atom=args.err_atom, scale=True)
 
         if args.grow:
             if args.mode == 'fixed':
                 # existed method
                 if epoch in args.grow_epoch:
-                    modelArch.grow(grow_atom='model', input_atom='model', operation='duplicate', limit=False)
+                    modelArch.grow(1)
                     model = models.__dict__[args.arch](num_classes=num_classes,
                                                        block_name=args.block_name,
                                                        archs = modelArch.arch)
                     if use_cuda:
                         model.cuda()
-                    # stateDict.grow(operation='duplicate')
 
-                    model.load_state_dict(stateDict.state_dict, strict=True)
+                    model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                     optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                    # hooker = ModelHooker(model, args.checkpoint, resume=True)
                     hooker.reset(model)
 
             elif args.mode == 'adapt':
                 # propose candidate blocks by truncated errs of each residual block
                 trigger.feed(errs) 
-                err_indices = trigger.trigger() 
+                err_indices = trigger.trigger(modelArch.get_num_blocks_all_layer()) 
                 if err_indices:
                     # try duplicate it to see if any layer exceeds upper limit
-                    err_indices = modelArch.grow(indices=err_indices, grow_atom=args.grow_atom, input_atom=args.err_atom, operation=args.grow_operation) # 'plus'
+                    err_indices = modelArch.grow(err_indices)
                     if err_indices:
 
                         print('growed module indices: ', err_indices)
                         print('New archs: %s' % modelArch)
-
-                        # update state dict
-                        '''
-                            have to integrate stateDict into modelarchitecture
-                            such that do not have to check grow_atom and input_atom twice
-                        '''
-
-                        # stateDict.grow(err_indices, operation=args.grow_operation, atom=args.err_atom, grow_atom=args.grow_atom)
 
                         model = models.__dict__[args.arch](num_classes=num_classes,
                                                            block_name=args.block_name,
                                                            archs = modelArch.arch)
                         if use_cuda:
                             model.cuda()
-                        model.load_state_dict(stateDict.state_dict, strict=True)
+                        model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                         optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                        # hooker = ModelHooker(model, args.checkpoint, resume=True)
                         hooker.reset(model)
 
                         # update history shape in trigger
-                        '''
-                            min trigger only supports layer indices currently!
-                        '''
                         trigger.update(err_indices)
             else:
                 raise KeyError('Grow mode %s not supported!' % args.mode)
