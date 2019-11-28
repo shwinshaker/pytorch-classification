@@ -24,7 +24,7 @@ class Hooker(object):
 
 class LayerHooker(object):
     # def __init__(self, layer, dpath, layername=None, resume=False):
-    def __init__(self, layer, layername=None):
+    def __init__(self, layer, layername=None, skipfirst=True):
         self.hookers = []
         for block in layer:
             self.hookers.append(Hooker(block))
@@ -34,6 +34,10 @@ class LayerHooker(object):
         else:
             self.layername = layername
 
+        if skipfirst:
+            self.start_block = 1
+        else:
+            self.start_block = 0
 
     def __len__(self):
         return len(self.hookers)
@@ -46,7 +50,9 @@ class LayerHooker(object):
             It's very weird that input is a tuple including `device`, but output is just a tensor..
         '''
         activations = []
-        for hooker in self.hookers:
+
+        # if orignial model, the residual of the first block can't be calculated
+        for hooker in self.hookers[self.start_block:]:
             # print(self.layername, type(hooker.output), hooker.input[0].size())
             activations.append(hooker.input[0].detach())
         # print(self.layername, type(hooker.output), hooker.output.size())
@@ -102,14 +108,17 @@ class LayerHooker(object):
 
 
 class ModelHooker(object):
-    def __init__(self, model, dpath, resume=False):
+    def __init__(self, model_name, dpath, resume=False):
         self.dpath = dpath
 
-        self.layerHookers = []
-        for key in model._modules:
-            if key.startswith('layer'):
-                # self.layerHookers.append(LayerHooker(model._modules[key], dpath, layername=key, resume=resume))
-                self.layerHookers.append(LayerHooker(model._modules[key], layername=key))
+        self.skipfirst=True
+        if model_name.startswith('transresnet'):
+            self.skipfirst=False
+
+        # self.layerHookers = []
+        # for key in model._modules:
+        #     if key.startswith('layer'):
+        #         self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst))
 
         self.history_norm = []
 
@@ -121,11 +130,11 @@ class ModelHooker(object):
         if not resume:
             self.logger.set_names(['epoch', 'layer1', 'layer2', 'layer3'])
 
-    def reset(self, model):
+    def hook(self, model):
         self.layerHookers = []
         for key in model._modules:
             if key.startswith('layer'):
-                self.layerHookers.append(LayerHooker(model._modules[key], layername=key))
+                self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst))
 
     def __len__(self):
         return len(self.layerHookers)

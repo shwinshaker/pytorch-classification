@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.init as init
 from torch.autograd import Variable
 
-__all__ = ['get_mean_and_std', 'init_params', 'mkdir_p', 'AverageMeter', 'str2bool', 'reduce_list']
+__all__ = ['get_mean_and_std', 'init_params', 'mkdir_p', 'AverageMeter', 'str2bool', 'reduce_list', 'is_powerOfTwo']
 
 
 def get_mean_and_std(dataset):
@@ -95,6 +95,9 @@ def reduce_list(li, order=1):
             li_.append(l)
     return li_
 
+def is_powerOfTwo (x): 
+    # check if an integer is power of two
+    return (x and (not(x & (x - 1))) ) 
 
 class AverageMeter(object):
     """Computes and stores the average and current value

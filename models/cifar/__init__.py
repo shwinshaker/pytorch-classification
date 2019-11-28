@@ -69,5 +69,6 @@ from .wrn import *
 from .preresnet import *
 from .densenet import *
 
+from .transresnet import *
 #
 from .accnet import *

@@ -5,49 +5,74 @@
 ##################################################
 
 #!/bin/bash
+debug=0 # 
 
-model="resnet"
-depth=20 # 20 # 
-grow=true
-mode='adapt' # fixed
-grow_atom='model' # 'layer'
-err_atom='layer' # 'layer'
-operation='duplicate' # plus
+model="resnet" # transresnet
+depth=20
+grow=true # true # false # true # false # true
+# grow start -------------------------
+mode='adapt' # 'fixed' # 'adapt'
 maxdepth=74
-thresh='1.2' #'1.1'
+grow_atom='model' # 'layer'
+operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
+scale=false # scale the residual by stepsize? For output if not adapt
+# ------ adapt
+err_atom='layer' # 'layer'
+thresh='1.1' #'1.1'
 backtrack=10
 window=5
-
-# fixed
+# ----- fixed
 dupEpoch=(60 110)
+# dupEpoch=(80 130)
+# dupEpoch='even' #'warm'
+# grow end -------------------------
 
+# regular hypers -----------
 epochs=164
-# schedule=(200 300) # dummy schedule
-schedule=(81 122) # dummy schedule
+scheduler='expo' # 'cosine' # constant, step, cosine
+# schedule=(81 122) 
+schedule=(60 110) # test with the same schedule
+lr='0.1'
+gamma='0.9' # 0.1 # if scheduler == step or expo
+weight_decay='1e-4'
+train_batch='128'
+# suffix="cosine"
 
-gpu_id=2
+gpu_id=0
 log_file="train.out"
-debug=0 # 
 
 if [ "$grow" = true ]; then
     if [ "$mode" = 'fixed' ]; then
-	dir="resnet-$depth-"$mode-"$(IFS='-'; printf '%s' "${dupEpoch[*]}")"
+	dir="$model-$depth-"$mode-"$(IFS='-'; printf '%s' "${dupEpoch[*]}")"-$operation-$scheduler
     else
         # dir="resnet-$depth-"$mode-$maxdepth-"$grow_atom""wise-th=${thresh//'.'/'_'}-back=$backtrack-window=$window"
-        dir="resnet-$depth-$mode-$maxdepth-$grow_atom-th=${thresh//'.'/'_'}-$err_atom-$operation"
+        dir="$model-$depth-$mode-$maxdepth-$grow_atom-th=${thresh//'.'/'-'}-$err_atom-$operation"-$scheduler
     fi
 else
-    dir="resnet-$depth"
+    dir="$model-$depth"
+fi
+
+### -------------------------------------------- caution!
+if [ "$scale" = false ];then
+    dir=$dir-"noscale"
+fi
+
+if [ "$model" = resnet ]; then
+    dir="Orig-"$dir
 fi
 
 if (( debug > 0 )); then
+    epochs=10
+    dupEpoch=(2 4)
+    schedule=(3 7)
     dir="Debug-"$dir
 fi
 
-dir=$dir-"schedule"
+# if [ ! -z "$suffix" ];then
+#     dir=$dir-$suffix
+# fi
 
 checkpoint="checkpoints/cifar10/$dir"
-
 [[ -f $checkpoint ]] && rm $checkpoint
 i=1
 while [ -d $checkpoint ]; do
@@ -64,16 +89,17 @@ if [ ! -f $checkpoint ];then
     mkdir $checkpoint
 fi
 echo "Checkpoint path: "$checkpoint
+echo 'Save main script to dir..'
+cp cifar.py $checkpoint
+cp -r utils $checkpoint
+cp -r models $checkpoint
 
 # ./train.sh $model $depth $grow $epochs "${schedule[@]}" $gpu_id $checkpoint $debug $maxdepth $mode $thresh $backtrack $window $atom $operation $dupEpoch 2>&1 | tee $checkpoint"/"$log_file 
 
 if [ "$grow" = true ]; then
-    python cifar.py -a $model --grow --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --schedule "${schedule[@]}" --gamma 0.1 --wd 1e-4 --checkpoint $checkpoint --gpu-id $gpu_id  --debug-batch-size $debug 2>&1 | tee $checkpoint"/"$log_file 
+    python cifar.py -a $model --grow --scale $scale --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id  --debug-batch-size $debug 2>&1 | tee $checkpoint"/"$log_file 
 else
-    python cifar.py -a $model --depth $depth --epochs $epochs --schedule ${schedule[@]} --gamma 0.1 --wd 1e-4 --checkpoint $checkpoint --gpu-id $gpu_id --debug-batch-size $debug | tee $checkpoint"/"$log_file 
+    python cifar.py -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule ${schedule[@]} --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id --debug-batch-size $debug | tee $checkpoint"/"$log_file 
 fi
 
-echo
-echo 'Dir: '$checkpoint
-echo 'copy main script to dir..'
-cp cifar.py $checkpoint
+echo "Checkpoint path: "$checkpoint

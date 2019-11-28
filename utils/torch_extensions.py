@@ -22,7 +22,7 @@ class StateDict:
 
     num_layers = 3
 
-    def __init__(self, model, operation='duplicate', atom='block'):
+    def __init__(self, model, operation='duplicate', atom='block', special_first=True):
         self.state_dict = model.state_dict()
         self.best_state_dict = None
 
@@ -31,6 +31,8 @@ class StateDict:
 
         assert atom in ['block', 'layer', 'model'], atom
         self.atom = atom
+
+        self.special_first = special_first
 
     def update(self, epoch, is_best, model):
         self.state_dict = model.state_dict()
@@ -84,7 +86,16 @@ class StateDict:
         # return new_dict
 
     def duplicate_block(self, l, b):
+
         print('> now duplicate %i-%i' % (l,b))
+        if self.special_first:
+            if b == 0:
+                print('> This is the first block, copy from back!')
+                # this block changes the feature map
+                # copy the one after it
+                self.insert_before(l, b+1, self.get_block(l, b+1))
+                return
+
         self.insert_before(l, b, self.get_block(l, b))
 
     def duplicate_blocks(self, pairs):
@@ -189,7 +200,14 @@ class ModelArch:
     def __init__(self, model_name, model, depth, max_depth=None, dpath=None,
                  operation='duplicate', atom='block'):
 
-        assert model_name.lower().startswith('resnet'), 'model_name is fixed to resnet'
+        assert 'resnet' in model_name.lower(), 'model_name is fixed to resnet'
+
+        # for original resnet, the first block of each stage is different
+        # thus copy it from the block behind it
+        special_first = True
+        if model_name.startswith('transresnet'):
+            special_first = False
+
         assert (depth - 2) % 6 == 0, 'When use basicblock, depth should be 6n+2, e.g. 20, 32, 44, 56, 110, 1202'
         assert (max_depth - 2) % 6 == 0, 'When use basicblock, depth should be 6n+2, e.g. 20, 32, 44, 56, 110, 1202'
 
@@ -210,7 +228,7 @@ class ModelArch:
         self.operation = operation
 
         # state dictionary
-        self.state_dict = StateDict(model, operation=operation, atom=atom)
+        self.state_dict = StateDict(model, operation=operation, atom=atom, special_first=special_first)
 
         # model architecture and stepsize logger
         self.dpath = dpath
@@ -323,7 +341,7 @@ class ModelArch:
             assert isinstance(indices, list), 'list of indices required'
             assert isinstance(indices[0], int), 'integer index required, e.g. [l]'
         if self.atom == 'model':
-            assert isinstance(indices, int), 'integer required, e.g. 1'
+            assert isinstance(indices, int), 'integer required, use 1'
 
         if not indices:
             return None
