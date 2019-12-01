@@ -24,7 +24,7 @@ import torchvision.datasets as datasets
 import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
-from utils import ModelHooker, Trigger, MinTrigger
+from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger
 from utils import StateDict, ModelArch, ChunkSampler
 from utils import str2bool
 from utils import is_powerOfTwo
@@ -62,7 +62,7 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
 parser.add_argument('--drop', '--dropout', default=0, type=float,
                     metavar='Dropout', help='Dropout ratio')
 parser.add_argument('--scheduler', type=str, default='constant', choices=scheduler_names,
-                        help='scheduler type: none, step, cosine, or expo')
+                        help='scheduler type: none, step, cosine, or expo, adapt')
 parser.add_argument('--schedule', type=int, nargs='+', default=[81, 122],
                         help='Decrease learning rate at these epochs. Required if scheduler if true')
 parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
@@ -109,7 +109,8 @@ parser.add_argument('--max-depth', type=int, default=74, help='Max model depth. 
 parser.add_argument('--window', type=int, default=3, help='Smooth scope of truncated err estimation. Required if mode = adapt.')
 parser.add_argument('--backtrack', type=int, default=30, help='History that base err tracked back to.  Required if mode = adapt.')
 parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger threshold for growing.  Required if mode = adapt.')
-parser.add_argument('--scale', type=str2bool, const=True, default=True, nargs='?', help='Scale the residual by stepsize?')
+parser.add_argument('--scale', type=str2bool, const=True, default=True, nargs='?', help='Scale the residual by activations? Scale the acceleration by residuals?')
+parser.add_argument('--scale-stepsize', type=str2bool, const=True, default=False, nargs='?', help='Scale the residual by stepsize?')
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -178,7 +179,7 @@ if args.mode == 'adapt':
 
 # Validate dataset
 assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
-assert args.backtrack > args.window, 'backtrack should at least greater than window size.'
+# assert args.backtrack > args.window, 'backtrack should at least greater than window size.'
 
 # Use CUDA
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
@@ -319,6 +320,8 @@ def main():
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, milestones=args.schedule, epochs=args.epochs, dpath=args.checkpoint)
     elif args.scheduler.startswith('expo'):
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, gamma=args.gamma, dpath=args.checkpoint)
+    elif args.scheduler.startswith('adapt'):
+        scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, gamma=args.gamma, dpath=args.checkpoint)
     else:
         raise KeyError(args.scheduler)
 
@@ -338,7 +341,7 @@ def main():
     print("     Learning rate scheduler: %s" % args.scheduler) # 'multi-step consine annealing schedule'
     if args.scheduler in ['step', 'cosine']:
         print("     Learning rate schedule - milestones: ", args.schedule)
-    if args.scheduler == 'step':
+    if args.scheduler in ['step', 'expo', 'adapt']:
         print("     Learning rate decay factor: %g" % args.gamma)
     print("     gpu id: %s" % args.gpu_id)
     print("     --------------------------- model ----------------------------------")
@@ -353,15 +356,16 @@ def main():
         print("     grow mode: %s" % args.mode)
         print("     grow atom: %s" % args.grow_atom)
         print("     grow operation: %s" % args.grow_operation)
-        print("     stepsize scaled residual: %s" % args.scale)
+        print("     stepsize scaled residual: %s" % args.scale_stepsize)
         if args.mode == 'fixed':
             print("     grow milestones: ", args.grow_epoch)
         else:
+            print("     max depth: %i" % args.max_depth)
+            print("     scaled down err: %s" % args.scale)
             print("     err atom: %s" % args.err_atom)
             print("     err threshold: %g" % args.threshold)
-            print("     max depth: %i" % args.max_depth)
-            print("     smoothing scope (deprecated): %i" % args.window)
-            print("     err back track history (deprecated): %i" % args.backtrack)
+            print("     smoothing scope: %i" % args.window)
+            print("     err back track history: %i" % args.backtrack)
     if args.debug_batch_size:
         print("     -------------------------- debug ------------------------------------")
         print("     debug batches: %i" % args.debug_batch_size)
@@ -385,7 +389,7 @@ def main():
         logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
     # model hooker
-    hooker = ModelHooker(args.arch, args.checkpoint)
+    hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale, scale_stepsize=args.scale_stepsize)
     hooker.hook(model)
     # model architecture tracker
     modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom)
@@ -396,7 +400,8 @@ def main():
     # grow
     if args.grow and args.mode == 'adapt':
         # trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
-        trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.grow_atom, err_atom=args.err_atom) # test
+        # trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.grow_atom, err_atom=args.err_atom) # test
+        trigger = ConvergeTrigger(smooth='median', atom=args.grow_atom, err_atom=args.err_atom, window=args.window, backtrack=args.backtrack, thresh=args.threshold) # test
 
     # evaluation mode
     if args.evaluate:
@@ -436,9 +441,6 @@ def main():
                 'optimizer' : optimizer.state_dict(),
             }, is_best, checkpoint=args.checkpoint)
 
-        # learning rate scheduler
-        scheduler.step_(epoch)
-
         # activations trace
         ## it's not clear should do this for training or for testing. Chang did for test.
         '''
@@ -453,7 +455,10 @@ def main():
         modelArch.update(epoch, is_best, model)
         # state dict is updated for this step: updated by the newly trained weights
         # model arch is not updated, it will update along with grow
-        errs = hooker.draw(epoch, archs=modelArch.arch, atom=args.err_atom, scale=args.scale)
+        errs = hooker.draw(epoch, archs=modelArch.arch)
+
+        # learning rate scheduler
+        scheduler.step_(epoch, errs)
 
         if args.grow:
             if args.mode == 'fixed':
@@ -469,8 +474,9 @@ def main():
 
                     model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                     # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                    optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
-                    scheduler.optimizer = optimizer
+                    # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+                    scheduler.update(optimizer)
                     hooker.hook(model)
 
             elif args.mode == 'adapt':
@@ -492,12 +498,13 @@ def main():
                             model.cuda()
                         model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                         # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                        optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
-                        scheduler.optimizer = optimizer
+                        # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
                         hooker.hook(model)
 
                         # update history shape in trigger
                         trigger.update(err_indices)
+                        scheduler.update(optimizer)
             else:
                 raise KeyError('Grow mode %s not supported!' % args.mode)
 

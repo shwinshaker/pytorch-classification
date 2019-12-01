@@ -23,8 +23,9 @@ class Hooker(object):
 
 
 class LayerHooker(object):
-    # def __init__(self, layer, dpath, layername=None, resume=False):
-    def __init__(self, layer, layername=None, skipfirst=True):
+    def __init__(self, layer, layername=None, skipfirst=True,
+                 scale_stepsize=False):
+
         self.hookers = []
         for block in layer:
             self.hookers.append(Hooker(block))
@@ -39,13 +40,15 @@ class LayerHooker(object):
         else:
             self.start_block = 0
 
+        self.scale_stepsize = scale_stepsize
+
     def __len__(self):
         return len(self.hookers)
 
     def __iter__(self):
         return iter(self.hookers)
 
-    def get_activations(self, arch, scale=True):
+    def get_activations(self, arch):
         '''
             It's very weird that input is a tuple including `device`, but output is just a tensor..
         '''
@@ -53,21 +56,15 @@ class LayerHooker(object):
 
         # if orignial model, the residual of the first block can't be calculated
         for hooker in self.hookers[self.start_block:]:
-            # print(self.layername, type(hooker.output), hooker.input[0].size())
             activations.append(hooker.input[0].detach())
-        # print(self.layername, type(hooker.output), hooker.output.size())
         activations.append(hooker.output.detach())
 
         residuals = []
         for b, (input, output) in enumerate(zip(activations[:-1], activations[1:])):
-            # residuals.append(output - input)
-            '''
-                It's not clear should we scale the residual by the stepsize here
-            '''
-            if scale:
-                residuals.append((output - input)/arch[b])
-            else:
-                residuals.append(output - input)
+            res = output - input
+            if self.scale_stepsize:
+                res /= arch[b]
+            residuals.append(res)
 
         accelerations = []
         for last, now in zip(residuals[:-1], residuals[1:]):
@@ -75,8 +72,8 @@ class LayerHooker(object):
 
         return activations, residuals, accelerations
 
-    def draw(self, arch, scale=True):
-        activations, residuals, accelerations = self.get_activations(arch, scale=scale)
+    def draw(self, arch):
+        activations, residuals, accelerations = self.get_activations(arch)
 
         # activation norm
         act_norms = []
@@ -93,40 +90,28 @@ class LayerHooker(object):
         for acceleration in accelerations:
             acc_norms.append(torch.norm(acceleration).item())
 
-        # track the history
-        # if output:
-        #     self.logger.append(act_norms + res_norms + acc_norms)
-
         return act_norms, res_norms, acc_norms
 
     def close(self):
-        # todo
-        # self.logger.plot()
-        # self.logger.close()
         for hooker in self.hookers:
             hooker.unhook()
 
 
 class ModelHooker(object):
-    def __init__(self, model_name, dpath, resume=False):
+    def __init__(self, model_name, dpath, resume=False, atom='block', scale_stepsize=False, scale=True):
         self.dpath = dpath
+
+        self.atom = atom
+        self.scale = scale
+        self.scale_stepsize = scale_stepsize
 
         self.skipfirst=True
         if model_name.startswith('transresnet'):
             self.skipfirst=False
 
-        # self.layerHookers = []
-        # for key in model._modules:
-        #     if key.startswith('layer'):
-        #         self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst))
-
         self.history_norm = []
 
-        # self.logger = Logger(os.path.join(dpath, 'Avg_truncated_err.txt'), resume=resume)
         self.logger = Logger(os.path.join(dpath, 'Avg_truncated_err.txt'))
-        # activations = ['activation(%i)' % i for i in range(len(self.hookers)+1)]
-        # residuals = ['residual(%i)' % i for i in range(len(self.hookers))]
-        # accelerations = ['acceleration(%i)' % i for i in range(len(self.hookers)-1)]
         if not resume:
             self.logger.set_names(['epoch', 'layer1', 'layer2', 'layer3'])
 
@@ -134,7 +119,7 @@ class ModelHooker(object):
         self.layerHookers = []
         for key in model._modules:
             if key.startswith('layer'):
-                self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst))
+                self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize))
 
     def __len__(self):
         return len(self.layerHookers)
@@ -142,32 +127,34 @@ class ModelHooker(object):
     def __iter__(self):
         return iter(self.layerHookers)
 
-    def draw(self, epoch, archs, atom='block', scale=True):
+    def draw(self, epoch, archs):
         norms = []
         err_norms = []
         for layerHooker, arch in zip(self.layerHookers, archs):
-            act_norms, res_norms, acc_norms = layerHooker.draw(arch, scale=scale)
+            act_norms, res_norms, acc_norms = layerHooker.draw(arch)
             norms.append([act_norms, res_norms, acc_norms])
+
+            # scale acceleration by residuals
+            # scale residual by activations
+            if self.scale:
+                acc_norms = [2 * acc / (res0 + res1) for acc, res0, res1 in zip(acc_norms, res_norms[:-1], res_norms[1:])]
+                # res_norms = [2 * res / (act0 + act1) for res, act0, act1 in zip(res_norms, act_norms[:-1], act_norms[1:])])
+
             err_norms.append(acc_norms)
         avg_err_norms = [statistics.mean(errs) for errs in err_norms]
-        avg_avg_err_norms = statistics.mean([e for errs in err_norms for e in errs])
+        avg_avg_err_norm = statistics.mean([e for errs in err_norms for e in errs])
 
         self.history_norm.append(norms)
         self.logger.append([epoch, *avg_err_norms])
 
-        if atom == 'block':
+        if self.atom == 'block':
             return err_norms
-        elif atom == 'layer':
+        elif self.atom == 'layer':
             return avg_err_norms
-        elif atom == 'model':
-            return avg_avg_err_norms
+        elif self.atom == 'model':
+            return avg_avg_err_norm
         else:
-            raise KeyError('atom %s not supported!' % atom)
-
-    # Let's now automatically record when draw errs
-    # def output(self):
-    #      for layerHooker in self.layerHookers:
-    #         layerHooker.output()
+            raise KeyError('atom %s not supported!' % self.atom)
 
     def close(self):
         for layerHooker in self.layerHookers:

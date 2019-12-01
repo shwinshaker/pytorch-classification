@@ -6,7 +6,7 @@ from . import reduce_list
 
 import statistics
 
-__all__ = ['Trigger', 'MinTrigger']
+__all__ = ['Trigger', 'MinTrigger', 'ConvergeTrigger']
 
 class Trigger(object):
     def __init__(self, smooth='median', window=5, backtrack=10, thresh=1.1):
@@ -104,6 +104,64 @@ class Trigger(object):
     def close(self):
         pass
         # self.logger.close()
+
+class ConvergeTrigger(object):
+    def __init__(self, smooth='median', window=10, backtrack=10, thresh=0.0,
+                 atom='model', err_atom='model'):
+
+        if not atom == 'model' or not err_atom == 'model':
+            raise NotImplementedError("ConvergeTrigger only support modelwise decision for now!")
+
+        self.atom = atom
+        self.err_atom = err_atom
+
+        if smooth == 'median':
+            self.smooth = statistics.median
+        elif smooth == 'mean':
+            self.smooth = statistics.mean
+        else:
+            raise KeyError("Estimation method not allowed!")
+
+        self.window = window
+        self.backtrack = backtrack
+        self.thresh = thresh
+
+        self.history = []
+
+    def feed(self, err):
+        assert(isinstance(err, float))
+
+        # merge into history, and if exceeds capacity, dequeue
+        self.history.append(err)
+
+        # efficiency considerations, not a big deal
+        # if len(self.history) > self.backtrack + self.window:
+        #     self.history.pop(0)
+
+    def _gradient(self, last=0):
+        if last > 0:
+            err0 = self.smooth(self.history[-self.backtrack-self.window-last:-self.backtrack-last])
+            err = self.smooth(self.history[-self.window-last:-last]) 
+        else:
+            err0 = self.smooth(self.history[-self.backtrack-self.window:-self.backtrack])
+            err = self.smooth(self.history[-self.window:]) 
+        return (err - err0) / err0
+
+    def trigger(self, arch=None):
+        if len(self.history) < self.window + self.backtrack + 1:
+            return 0
+
+        print(self._gradient(), self._gradient(last=1))
+
+        if self._gradient() <= self.thresh and self._gradient(last=1) > self.thresh:
+            return 1
+        return 0
+
+    def update(self, err_index):
+        self.history = []
+
+    def close(self):
+        pass
 
 
 class MinTrigger(object):

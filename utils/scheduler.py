@@ -17,7 +17,7 @@ class ConstantLR(_LRScheduler):
         self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
         self.logger.set_names(['epoch', 'learning_rate'])
 
-    def step_(self, epoch):
+    def step_(self, epoch, err):
         lrs = self.get_lr()
         assert(len(set(lrs)) == 1), 'unexpected number of unique lrs!'
         self.logger.append([epoch, lrs[0]])
@@ -29,6 +29,9 @@ class ConstantLR(_LRScheduler):
 
     def lr_(self):
         return self.get_lr()[0]
+
+    def update(self, optimizer):
+        self.optimizer = optimizer
 
     def close(self):
         self.logger.close()
@@ -45,7 +48,7 @@ class MultiStepLR_(MultiStepLR):
         self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
         self.logger.set_names(['epoch', 'learning_rate'])
 
-    def step_(self, epoch):
+    def step_(self, epoch, err):
         lrs = self.get_lr()
         assert(len(set(lrs)) == 1), 'unexpected number of unique lrs!'
         self.logger.append([epoch, lrs[0]])
@@ -54,6 +57,9 @@ class MultiStepLR_(MultiStepLR):
 
     def lr_(self):
         return self.get_lr()[0]
+
+    def update(self, optimizer):
+        self.optimizer = optimizer
 
     def close(self):
         self.logger.close()
@@ -74,7 +80,7 @@ class MultiStepCosineLR(CosineAnnealingLR):
         self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
         self.logger.set_names(['epoch', 'learning_rate'])
 
-    def step_(self, epoch):
+    def step_(self, epoch, err):
         print(epoch, self.last_epoch, self.T_max, self.T, self.next_T)
 
         lrs = self.get_lr()
@@ -91,6 +97,9 @@ class MultiStepCosineLR(CosineAnnealingLR):
     def lr_(self):
         return self.get_lr()[0]
 
+    def update(self, optimizer):
+        self.optimizer = optimizer
+
     def close(self):
         self.logger.close()
 
@@ -106,7 +115,7 @@ class ExponentialLR_(ExponentialLR):
         self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
         self.logger.set_names(['epoch', 'learning_rate'])
 
-    def step_(self, epoch):
+    def step_(self, epoch, err):
         lrs = self.get_lr()
         assert(len(set(lrs)) == 1), 'unexpected number of unique lrs!'
         self.logger.append([epoch, lrs[0]])
@@ -116,8 +125,102 @@ class ExponentialLR_(ExponentialLR):
     def lr_(self):
         return self.get_lr()[0]
 
+    def update(self, optimizer):
+        raise NotImplementedError('Make sure this init is correct, now optimizer updated from args.lr!')
+        super(ExponentialLR_, self).__init__(optimizer, gamma=self.gamma, last_epoch=-1)
+        # self.optimizer = optimizer
+        # self.last_epoch = 0
+
     def close(self):
         self.logger.close()
 
 def expo(**kwargs):
     return ExponentialLR_(**kwargs)
+
+
+from torch.optim.optimizer import Optimizer
+import statistics
+class AdaptLR:
+    '''
+        last_epoch doesn't actually work in this case
+    '''
+    def __init__(self, optimizer, gamma=0.1, dpath='.', last_epoch=-1):
+        if not isinstance(optimizer, Optimizer):
+            raise TypeError('{} is not an Optimizer'.format(type(optimizer).__name__))
+        self.optimizer = optimizer
+        self.gamma = gamma
+
+        if last_epoch == -1:
+            for group in optimizer.param_groups:
+                group.setdefault('initial_lr', group['lr'])
+            last_epoch = 0
+        else:
+            for i, group in enumerate(optimizer.param_groups):
+                if 'initial_lr' not in group:
+                    raise KeyError("param 'initial_lr' is not specified "
+                                   "in param_groups[{}] when resuming an optimizer".format(i))
+        self.lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
+        self.last_epoch = last_epoch
+        self.err_history = []
+
+        self.min_lr = 0.001
+        self.max_lr = 1.0
+        self.window = 7
+        self.backtrack = 3
+        self.smooth = statistics.median
+
+        self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
+        self.logger.set_names(['epoch', 'learning_rate'])
+
+    def _gradient(self, last=0):
+        if last > 0:
+            err0 = self.smooth(self.err_history[-self.backtrack-self.window-last:-self.backtrack-last])
+            err = self.smooth(self.err_history[-self.window-last:-last]) 
+        else:
+            err0 = self.smooth(self.err_history[-self.backtrack-self.window:-self.backtrack])
+            err = self.smooth(self.err_history[-self.window:]) 
+        return (err - err0) / err0
+
+    def step_(self, epoch, err):
+        assert(len(set(self.lrs)) == 1), 'unexpected number of unique lrs!'
+        self.logger.append([epoch, self.lrs[0]])
+    
+        self.err_history.append(err)
+        if len(self.err_history) < self.window + self.backtrack:
+            # trival case: window = 1, backtrack = 1
+            # len(self.err_history) >= 2
+            return
+        self.step(self._gradient())
+
+    def step(self, gradient, epoch=None):
+        if gradient > 0:
+            # pass
+            self.lrs = [min(self.max_lr, lr / self.gamma) for lr in self.lrs]
+        else:
+            self.lrs = [max(self.min_lr, lr * self.gamma) for lr in self.lrs]
+        for param_group, lr in zip(self.optimizer.param_groups, self.lrs):
+            param_group['lr'] = lr
+
+        if epoch is None:
+            epoch = self.last_epoch + 1
+        self.last_epoch = epoch
+
+    def lr_(self):
+        lrs = [param_group['lr'] for param_group in self.optimizer.param_groups]
+        assert(len(set(lrs)) == 1)
+        assert(lrs[0] == self.lrs[0])
+        return self.lrs[0]
+
+    def update(self, optimizer):
+        self.optimizer = optimizer
+        for group in optimizer.param_groups:
+            group.setdefault('initial_lr', group['lr'])
+        self.lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
+        self.err_history = []
+        self.last_epoch = 0
+
+    def close(self):
+        self.logger.close()
+
+def adapt(**kwargs):
+    return AdaptLR(**kwargs)
