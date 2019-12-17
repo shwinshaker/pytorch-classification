@@ -1,0 +1,8 @@
+[116560] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-90-duplicate-constant-lr=0-1-noscale [0]
+[116568] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-100-duplicate-constant-lr=0-1-noscale [0]
+[116576] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-110-duplicate-constant-lr=0-1-noscale [0]
+[116584] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-120-duplicate-constant-lr=0-1-noscale [0]
+[116592] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-130-duplicate-constant-lr=0-1-noscale [0]
+[116600] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-140-duplicate-constant-lr=0-1-noscale [0]
+[116608] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-150-duplicate-constant-lr=0-1-noscale [0]
+[116616] Tue Dec 17 02:04:50 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-fixed-10-160-duplicate-constant-lr=0-1-noscale [0]

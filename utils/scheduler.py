@@ -5,7 +5,7 @@ from torch.optim.lr_scheduler import _LRScheduler, MultiStepLR, CosineAnnealingL
 import os
 from . import Logger
 
-__all__ = ['ConstantLR', 'MultiStepLR_', 'MultiStepCosineLR', 'ExponentialLR_']
+# __all__ = ['ConstantLR', 'MultiStepLR_', 'MultiStepCosineLR', 'ExponentialLR_']
 
 class ConstantLR(_LRScheduler):
 
@@ -30,7 +30,7 @@ class ConstantLR(_LRScheduler):
     def lr_(self):
         return self.get_lr()[0]
 
-    def update(self, optimizer):
+    def update(self, optimizer, epoch=None):
         self.optimizer = optimizer
 
     def close(self):
@@ -58,7 +58,7 @@ class MultiStepLR_(MultiStepLR):
     def lr_(self):
         return self.get_lr()[0]
 
-    def update(self, optimizer):
+    def update(self, optimizer, epoch=None):
         self.optimizer = optimizer
 
     def close(self):
@@ -68,9 +68,13 @@ def step(**kwargs):
     return MultiStepLR_(**kwargs)
 
 
+import warnings
 class MultiStepCosineLR(CosineAnnealingLR):
 
     def __init__(self, optimizer, milestones, epochs, eta_min=0.001, dpath='.'):
+        ## -----------
+        # self.temp_list = milestones
+        # ---------------
         self.milestones = iter(sorted(milestones + [epochs, 2*epochs])) # last `epochs` is dummy
         self.eta_min = eta_min
         self.T = 0
@@ -92,12 +96,21 @@ class MultiStepCosineLR(CosineAnnealingLR):
             self.T = self.next_T
             self.next_T = next(self.milestones)
             self.T_max = self.next_T - self.T
+
+        # if not epoch >= self.temp_list[-1]:
+        #     warnings.warn('cosine scheduler hard coded! learning rate is reverted!')
+        #     self.last_epoch = -1
+
         self.step()
+        # print(self.last_epoch)
 
     def lr_(self):
+        lrs = [param_group['lr'] for param_group in self.optimizer.param_groups]
+        assert(len(set(lrs)) == 1)
+        assert(lrs[0] == self.get_lr()[0]), (lrs[0], self.get_lr()[0], self.last_epoch)
         return self.get_lr()[0]
 
-    def update(self, optimizer):
+    def update(self, optimizer, epoch=None):
         self.optimizer = optimizer
 
     def close(self):
@@ -105,6 +118,47 @@ class MultiStepCosineLR(CosineAnnealingLR):
 
 def cosine(**kwargs):
     return MultiStepCosineLR(**kwargs)
+
+
+class AdaptMultiStepCosineLR(MultiStepCosineLR):
+
+    def update(self, optimizer, epoch=None):
+        self.optimizer = optimizer
+        self.last_epoch = 0
+        self.T_max = self.next_T - epoch - 1
+
+def cosine_restart(**kwargs):
+    return AdaptMultiStepCosineLR(**kwargs)
+
+
+class CosineLR(CosineAnnealingLR):
+
+    def __init__(self, optimizer, epochs, eta_min=0.001, dpath='.'):
+        warnings.warn('hardcoded T_max')
+        super(CosineLR, self).__init__(optimizer, epochs//3, eta_min)
+
+        self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
+        self.logger.set_names(['epoch', 'learning_rate'])
+
+    def step_(self, epoch, err):
+        lrs = self.get_lr()
+        assert(len(set(lrs)) == 1), 'unexpected number of unique lrs!'
+        self.logger.append([epoch, lrs[0]])
+
+        self.step()
+
+    def lr_(self):
+        return self.get_lr()[0]
+
+    def update(self, optimizer, epoch=None):
+        self.optimizer = optimizer
+        self.last_epoch = 0
+
+    def close(self):
+        self.logger.close()
+
+def acosine(**kwargs):
+    return CosineLR(**kwargs)
 
 
 class ExponentialLR_(ExponentialLR):
@@ -125,7 +179,7 @@ class ExponentialLR_(ExponentialLR):
     def lr_(self):
         return self.get_lr()[0]
 
-    def update(self, optimizer):
+    def update(self, optimizer, epoch=None):
         raise NotImplementedError('Make sure this init is correct, now optimizer updated from args.lr!')
         super(ExponentialLR_, self).__init__(optimizer, gamma=self.gamma, last_epoch=-1)
         # self.optimizer = optimizer
@@ -211,7 +265,7 @@ class AdaptLR:
         assert(lrs[0] == self.lrs[0])
         return self.lrs[0]
 
-    def update(self, optimizer):
+    def update(self, optimizer, epoch=None):
         self.optimizer = optimizer
         for group in optimizer.param_groups:
             group.setdefault('initial_lr', group['lr'])

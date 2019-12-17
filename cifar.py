@@ -62,7 +62,7 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
 parser.add_argument('--drop', '--dropout', default=0, type=float,
                     metavar='Dropout', help='Dropout ratio')
 parser.add_argument('--scheduler', type=str, default='constant', choices=scheduler_names,
-                        help='scheduler type: none, step, cosine, or expo, adapt')
+                        help='scheduler type: none, step, cosine, or expo, adapt, acosine, cosine_restart')
 parser.add_argument('--schedule', type=int, nargs='+', default=[81, 122],
                         help='Decrease learning rate at these epochs. Required if scheduler if true')
 parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
@@ -200,6 +200,8 @@ best_val_acc = 0  # best test accuracy
 
 def main():
     global best_val_acc
+    best_epoch = 0
+
     start_epoch = args.start_epoch  # start from epoch 0 or last checkpoint epoch
 
     if not os.path.isdir(args.checkpoint):
@@ -228,7 +230,7 @@ def main():
         num_classes = 100
 
     # test set size: 10,000
-    testset = dataloader(root='./data', train=False, download=False, transform=transform_test)
+    testset = dataloader(root='./data', train=False, download=True, transform=transform_test)
     valset = data.Subset(testset, range(len(testset)//2))
     testset = data.Subset(testset, range(len(testset)//2+1, len(testset)))
     valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
@@ -322,6 +324,8 @@ def main():
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, gamma=args.gamma, dpath=args.checkpoint)
     elif args.scheduler.startswith('adapt'):
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, gamma=args.gamma, dpath=args.checkpoint)
+    elif args.scheduler.startswith('acosine'):
+        scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, epochs=args.epochs, dpath=args.checkpoint)
     else:
         raise KeyError(args.scheduler)
 
@@ -339,7 +343,7 @@ def main():
     print("     Momentum: %g" % args.momentum)
     print("     Weight decay: %g" % args.weight_decay)
     print("     Learning rate scheduler: %s" % args.scheduler) # 'multi-step consine annealing schedule'
-    if args.scheduler in ['step', 'cosine']:
+    if args.scheduler in ['step', 'cosine', 'cosine_restart']:
         print("     Learning rate schedule - milestones: ", args.schedule)
     if args.scheduler in ['step', 'expo', 'adapt']:
         print("     Learning rate decay factor: %g" % args.gamma)
@@ -432,6 +436,8 @@ def main():
 
         # save model
         is_best = val_acc > best_val_acc
+        if is_best:
+            best_epoch = epoch + 1
         best_val_acc = max(val_acc, best_val_acc)
         save_checkpoint({
                 'epoch': epoch + 1,
@@ -463,7 +469,7 @@ def main():
         if args.grow:
             if args.mode == 'fixed':
                 # existed method
-                if epoch in args.grow_epoch:
+                if epoch+1 in args.grow_epoch: # justin 12.14: changed `epoch` to `epoch+1`
                     modelArch.grow(1)
                     print('New archs: %s' % modelArch)
                     model = models.__dict__[args.arch](num_classes=num_classes,
@@ -475,6 +481,10 @@ def main():
                     model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                     # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
                     # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                    '''
+                        not sure if have to copy the entire momentum history for each weight
+                        here just initialize the optimizer again
+                    '''
                     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
                     scheduler.update(optimizer)
                     hooker.hook(model)
@@ -504,7 +514,7 @@ def main():
 
                         # update history shape in trigger
                         trigger.update(err_indices)
-                        scheduler.update(optimizer)
+                        scheduler.update(optimizer, epoch=epoch)
             else:
                 raise KeyError('Grow mode %s not supported!' % args.mode)
 
@@ -519,7 +529,7 @@ def main():
     # logger.plot()
     # savefig(os.path.join(args.checkpoint, 'log.eps'))
 
-    print('\nBest val acc: %.4f' % best_val_acc) # this is the validation acc
+    print('\nBest val acc: %.4f at %i' % (best_val_acc, best_epoch)) # this is the validation acc
 
     test_loss, test_acc = test(testloader, model, criterion, -1, use_cuda)
     # test_loss, test_acc = test(valloader, model, criterion, -1, use_cuda)

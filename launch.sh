@@ -8,10 +8,10 @@
 debug=0 # 
 
 model="resnet" # transresnet
-depth=68
-grow=false # true # true # true # false # true # false # true
+depth=20
+grow=true # false # true # true # false # true # false # true
 # grow start -------------------------
-mode='adapt' # 'adapt'
+mode='fixed' # 'adapt'
 maxdepth=74
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
@@ -24,37 +24,47 @@ backtrack=3
 window=7
 # ----- fixed
 # dupEpoch=(60 130)
-dupEpoch=(80 130)
+# dupEpoch=(80 130)
+# dupEpoch=(60 $1)
+dupEpoch=($1 $2)
+# dupEpoch=(70 110)
 # dupEpoch='even' #'warm'
 # grow end -------------------------
 
 # regular hypers -----------
 epochs=164
-scheduler='constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+scheduler='constant' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
-schedule=(60 110) # test with the same schedule
+# schedule=(54 108) # even
+# schedule=(60 $1) # test with the same schedule
+schedule=($1 $2) # test with the same schedule
+# schedule=(10 30 70 110) # test with the same schedule
+# schedule=($1 60) # test with the same schedule
+# schedule=(20)
 lr='0.1'
 gamma='0.9' # 0.1 # if scheduler == step or expo
 weight_decay='1e-4'
 train_batch='128'
 
-gpu_id=2
+gpu_id=$3 #5
 log_file="train.out"
+suffix="-lr=${lr//'.'/'-'}"
 
 if [ "$grow" = true ]; then
     if [ "$mode" = 'fixed' ]; then
-	dir="$model-$depth-"$mode-"$(IFS='-'; printf '%s' "${dupEpoch[*]}")"-$operation-$scheduler
+	# dir="$model-$depth-"$mode-"$(IFS='-'; printf '%s' "${dupEpoch[*]}")"-$operation-$scheduler-"$(IFS='-'; printf '%s' "${schedule[*]}")"$suffix
+	dir="$model-$depth-"$mode-"$(IFS='-'; printf '%s' "${dupEpoch[*]}")"-$operation-$scheduler$suffix
     else
         # dir="resnet-$depth-"$mode-$maxdepth-"$grow_atom""wise-th=${thresh//'.'/'_'}-back=$backtrack-window=$window"
-        dir="$model-$depth-$mode-$maxdepth-$grow_atom-th=${thresh//'.'/'-'}-$err_atom-$operation-$scheduler"
+        dir="$model-$depth-$mode-$maxdepth-$grow_atom-th=${thresh//'.'/'-'}-$err_atom-$operation-$scheduler"$suffix
     fi
 else
-    dir="$model-$depth"
+    dir="$model-$depth-$scheduler-"$(IFS='-'; printf '%s' "${schedule[*]}")"-lr=${lr//'.'/'-'}"
 fi
 
 ### -------------------------------------------- caution!
 
-if [ ! "$scheduler" = constant ] && [ ! "$scheduler" = cosine ];then
+if [ ! "$scheduler" = constant ] && [ ! "$scheduler" = cosine ] && [ ! "$scheduler" = acosine ] && [ ! "$scheduler" = cosine_restart ] ;then
     dir="$dir-gamma=${gamma//'.'/'-'}"
 fi
 
@@ -69,7 +79,7 @@ fi
 if (( debug > 0 )); then
     # epochs=20
     dupEpoch=(2 4)
-    schedule=(3 7)
+    schedule=(2 4)
     dir="Debug-"$dir
 fi
 
@@ -81,7 +91,9 @@ checkpoint="checkpoints/cifar10/$dir"
 [[ -f $checkpoint ]] && rm $checkpoint
 i=1
 while [ -d $checkpoint ]; do
-    read -p "Checkpoint path $checkpoint already exists. Delete[d], Rename[r], Continue[c] or Terminate[t]? " ans
+    ls $checkpoint
+    tail -n 5 $checkpoint/train.out
+    read -p "Checkpoint path $checkpoint already exists. Delete[d], Rename[r], Continue[c] or Terminate[*]? " ans
     case $ans in
 	d ) rm -rf $checkpoint; break;;
 	r ) checkpoint=${checkpoint%%_*}"_"$i;;
@@ -102,9 +114,13 @@ cp -r models $checkpoint
 # ./train.sh $model $depth $grow $epochs "${schedule[@]}" $gpu_id $checkpoint $debug $maxdepth $mode $thresh $backtrack $window $atom $operation $dupEpoch 2>&1 | tee $checkpoint"/"$log_file 
 
 if [ "$grow" = true ]; then
-    python cifar.py -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id  --debug-batch-size $debug 2>&1 | tee $checkpoint"/"$log_file 
+    # python cifar.py -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id  --debug-batch-size $debug 2>&1 | tee $checkpoint"/"$log_file
+    python cifar.py -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id  --debug-batch-size $debug > $checkpoint"/"$log_file 2>&1 &
 else
-    python cifar.py -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule ${schedule[@]} --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id --debug-batch-size $debug | tee $checkpoint"/"$log_file 
+    # python cifar.py -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule ${schedule[@]} --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id --debug-batch-size $debug | tee $checkpoint"/"$log_file
+    python cifar.py -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule ${schedule[@]} --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id --debug-batch-size $debug > $checkpoint"/"$log_file 2>&1 &
 fi
+pid=$!
+echo "[$pid] [Path]: $checkpoint"
+echo "[$pid] $(date) [Path]: $checkpoint" >> log.txt
 
-echo "Checkpoint path: "$checkpoint
