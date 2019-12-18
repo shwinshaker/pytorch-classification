@@ -6,4 +6,4 @@
 
 #!/bin/bash
 
-python imagenet.py -a resnet18 --data ./data --epochs 90 --schedule 31 61 --gamma 0.1 -c checkpoints/imagenet/resnet18
+python cifar.py -d 'imagenet' -a resnet18 --epochs 90 --schedule 31 61 --gamma 0.1 --train_batch 256 --test_batch 200 -c checkpoints/imagenet/resnet18

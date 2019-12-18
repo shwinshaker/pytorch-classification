@@ -43,7 +43,7 @@ scheduler_names = sorted(name for name in schedulers.__dict__
     if name.islower() and not name.startswith("__")
     and callable(schedulers.__dict__[name]))
 
-parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Training')
+parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 + Imagenet Training')
 # Datasets
 parser.add_argument('-d', '--dataset', default='cifar10', type=str)
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -211,50 +211,76 @@ def main():
 
     # Data
     print('==> Preparing dataset %s' % args.dataset)
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
-
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
     if args.dataset == 'cifar10':
         dataloader = datasets.CIFAR10
         num_classes = 10
-    else:
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+    elif args.dataset == 'cifar100':
         dataloader = datasets.CIFAR100
         num_classes = 100
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
 
-    # test set size: 10,000
-    testset = dataloader(root='./data', train=False, download=True, transform=transform_test)
-    valset = data.Subset(testset, range(len(testset)//2))
-    testset = data.Subset(testset, range(len(testset)//2+1, len(testset)))
-    valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
-    testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+    elif args.dataset == 'imagenet':
+        dataloader = datasets.ImageNet
+        num_classes = 1000
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+        transform_train = transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ])
 
-    # training set size: 50,000 - 10,000 = 40,000
-    trainset = dataloader(root='./data', train=True, download=True, transform=transform_train) # shouldn't validation set apply transform_test?
-    # valset = data.Subset(trainset, range(len(trainset)-len(testset), len(trainset)))
-    # trainset = data.Subset(trainset, range(len(trainset)-len(testset)))
-    trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers) 
-    # trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers, sampler=ChunkSampler(len(trainset)-len(testset), 0))
+        transform_test = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize,
+        ])
+    else:
+        raise KeyError(args.dataset)
 
-    # validation set size: 10,000
-    # validate set chunk from training set (train=True), but apply test transform, i.e. no augmentation
-    # valset = dataloader(root='./data', train=True, download=True, transform=transform_test)[50000:]
-    # valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers, sampler=ChunkSampler(len(testset), len(trainset)-len(testset)))
-    # valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+    if args.dataset.startswith('cifar'):
+        # test set size: 10,000
+        testset = dataloader(root='./data', train=False, download=True, transform=transform_test)
+        valset = data.Subset(testset, range(len(testset)//2))
+        testset = data.Subset(testset, range(len(testset)//2+1, len(testset)))
+        valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+        testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
 
-    ## ------ original
-    # trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
-    # trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
+        # training set size: 50,000 - 10,000 = 40,000
+        trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
+        trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
+    else:
+        testset = dataloader(root='./data', split='val', download=True, transform=transform_test)
+        valset = data.Subset(testset, range(len(testset)//2))
+        testset = data.Subset(testset, range(len(testset)//2+1, len(testset)))
+        valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+        testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers, pin_memory=True)
 
-    # valset = dataloader(root='./data', train=False, download=False, transform=transform_test)
-    # valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+        trainset = dataloader(root='./data', split='train', download=True, transform=transform_train)
+        trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers, pin_memory=True)
+
 
 
     # Model

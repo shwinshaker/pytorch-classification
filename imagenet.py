@@ -9,6 +9,10 @@ import os
 import shutil
 import time
 import random
+# --------------
+import math
+from scipy import optimize
+import itertools
 
 import torch
 import torch.nn as nn
@@ -18,25 +22,45 @@ import torch.optim as optim
 import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import torchvision.models as models
-import models.imagenet as customized_models
+# import torchvision.models as models
+# import models.imagenet as customized_models
+import models.imagenet as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
+# ----------------------
+from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger
+from utils import StateDict, ModelArch, ChunkSampler
+from utils import str2bool
+from utils import is_powerOfTwo
+
+from utils import scheduler as schedulers
+
+import warnings
+
+torch.autograd.set_detect_anomaly(True)
 
 # Models
-default_model_names = sorted(name for name in models.__dict__
+# default_model_names = sorted(name for name in models.__dict__
+#     if name.islower() and not name.startswith("__")
+#     and callable(models.__dict__[name]))
+#
+# customized_models_names = sorted(name for name in customized_models.__dict__
+#     if name.islower() and not name.startswith("__")
+#     and callable(customized_models.__dict__[name]))
+#
+# for name in customized_models.__dict__:
+#     if name.islower() and not name.startswith("__") and callable(customized_models.__dict__[name]):
+#         models.__dict__[name] = customized_models.__dict__[name]
+#
+# model_names = default_model_names + customized_models_names
+
+model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-customized_models_names = sorted(name for name in customized_models.__dict__
+scheduler_names = sorted(name for name in schedulers.__dict__
     if name.islower() and not name.startswith("__")
-    and callable(customized_models.__dict__[name]))
-
-for name in customized_models.__dict__:
-    if name.islower() and not name.startswith("__") and callable(customized_models.__dict__[name]):
-        models.__dict__[name] = customized_models.__dict__[name]
-
-model_names = default_model_names + customized_models_names
+    and callable(schedulers.__dict__[name]))
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
