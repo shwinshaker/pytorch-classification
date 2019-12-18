@@ -115,28 +115,28 @@ def main():
         mkdir_p(args.checkpoint)
 
     # Data
-    print('==> Preparing dataset %s' % args.dataset)
+    print('=> loading data..')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     transform_train = transforms.Compose([
-        transforms.RandomSizedCrop(224),
+        transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         normalize,
     ])
 
     transform_test = transforms.Compose([
-        transforms.Scale(256),
+        transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         normalize,
     ])
     dataloader = datasets.ImageNet
-    trainset = dataloader(root='./data', split='train', download=False, transform=transform_train)
-    train_loader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers, pin_memory=True))
+    trainset = dataloader(root='./data', split='train', download=True, transform=transform_train)
+    train_loader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers, pin_memory=True)
 
     testset = dataloader(root='./data', split='val', download=False, transform=transform_test)
-    test_loader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers, pin_memory=True))
+    test_loader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers, pin_memory=True)
 
     # # Data loading code
     # traindir = os.path.join(args.data, 'train')
