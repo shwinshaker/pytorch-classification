@@ -134,7 +134,8 @@ class ResNet(nn.Module):
         self.layer1 = self._make_layer(block, 16, archs[0])
         self.layer2 = self._make_layer(block, 32, archs[1], stride=2)
         self.layer3 = self._make_layer(block, 64, archs[2], stride=2)
-        self.avgpool = nn.AvgPool2d(8)
+        # self.avgpool = nn.AvgPool2d(8)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(64 * block.expansion, num_classes)
 
         for m in self.modules():

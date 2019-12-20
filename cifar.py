@@ -94,7 +94,7 @@ parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 #Device options
-parser.add_argument('--gpu-id', default='0', type=str,
+parser.add_argument('--gpu-id', default='7', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
 
 #growth
@@ -178,12 +178,17 @@ if args.mode == 'adapt':
     assert args.max_depth, 'require max depth for adaptive mode'
 
 # Validate dataset
-assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
+# assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
+assert args.dataset in ['cifar10', 'cifar100', 'imagenet']
 # assert args.backtrack > args.window, 'backtrack should at least greater than window size.'
 
 # Use CUDA
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 use_cuda = torch.cuda.is_available()
+if use_cuda:
+    device = torch.device("cuda:0")
+else:
+    device = "cpu"
 # ---------------------
 # use_cuda = False
 # ---------------------
@@ -276,10 +281,10 @@ def main():
         valset = data.Subset(testset, range(len(testset)//2))
         testset = data.Subset(testset, range(len(testset)//2+1, len(testset)))
         valloader = data.DataLoader(valset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
-        testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers, pin_memory=True)
+        testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers) # , pin_memory=True)
 
         trainset = dataloader(root='./data', split='train', download=True, transform=transform_train)
-        trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers, pin_memory=True)
+        trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers) # , pin_memory=True)
 
 
 
@@ -329,9 +334,12 @@ def main():
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
 
-    if use_cuda:
-        # model = torch.nn.DataParallel(model).cuda()
-        model.cuda()
+    # if use_cuda:
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        model = torch.nn.DataParallel(model) # .cuda()
+    # model.cuda()
+    model.to(device) # --
     cudnn.benchmark = True
 
     # criterion and optimizer
@@ -374,6 +382,7 @@ def main():
     if args.scheduler in ['step', 'expo', 'adapt']:
         print("     Learning rate decay factor: %g" % args.gamma)
     print("     gpu id: %s" % args.gpu_id)
+    print("     num workers: %i" % args.workers)
     print("     --------------------------- model ----------------------------------")
     print("     Model: %s" % args.arch)
     print("     depth: %i" % args.depth)
@@ -419,7 +428,7 @@ def main():
         logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
     # model hooker
-    hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale, scale_stepsize=args.scale_stepsize)
+    hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale, scale_stepsize=args.scale_stepsize, device=device)
     hooker.hook(model)
     # model architecture tracker
     modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom)
@@ -501,8 +510,13 @@ def main():
                     model = models.__dict__[args.arch](num_classes=num_classes,
                                                        block_name=args.block_name,
                                                        archs = modelArch.arch)
-                    if use_cuda:
-                        model.cuda()
+                    # if use_cuda:
+                    #     model.cuda()
+                    if torch.cuda.device_count() > 1:
+                        print("Let's use", torch.cuda.device_count(), "GPUs!")
+                        model = torch.nn.DataParallel(model) # .cuda()
+                    # model.cuda()
+                    model.to(device) # --
 
                     model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                     # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
@@ -530,8 +544,14 @@ def main():
                         model = models.__dict__[args.arch](num_classes=num_classes,
                                                            block_name=args.block_name,
                                                            archs = modelArch.arch)
-                        if use_cuda:
-                            model.cuda()
+                        # if use_cuda:
+                        #     model.cuda()
+                        if torch.cuda.device_count() > 1:
+                            print("Let's use", torch.cuda.device_count(), "GPUs!")
+                            model = torch.nn.DataParallel(model) # .cuda()
+                        # model.cuda()
+                        model.to(device) # --
+
                         model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                         # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
                         # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
@@ -566,8 +586,14 @@ def main():
     best_model = models.__dict__[args.arch](num_classes=num_classes,
                                             block_name=args.block_name,
                                             archs = modelArch.best_arch)
-    if use_cuda:
-        best_model.cuda()
+    # if use_cuda:
+    #     best_model.cuda()
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        best_model = torch.nn.DataParallel(best_model) # .cuda()
+    # model.cuda()
+    best_model.to(device) # --
+
     best_model.load_state_dict(best_checkpoint['state_dict'])
     test_loss, test_acc = test(testloader, best_model, criterion, -1, use_cuda)
     # test_loss, test_acc = test(valloader, best_model, criterion, -1, use_cuda)
@@ -597,9 +623,10 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda(non_blocking=True) # async=True)
-        inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
+        inputs, targets = inputs.to(device), targets.to(device)
+        # if use_cuda:
+        #     inputs, targets = inputs.cuda(), targets.cuda(non_blocking=True) # async=True)
+        # inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
 
         # compute output
         outputs = model(inputs)
@@ -660,10 +687,11 @@ def test(testloader, model, criterion, epoch, use_cuda):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda()
-        # inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
-        inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
+        inputs, targets = inputs.to(device), targets.to(device)
+        # if use_cuda:
+        #     inputs, targets = inputs.cuda(), targets.cuda()
+        # # inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
+        # inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
 
         # compute output
         with torch.no_grad():

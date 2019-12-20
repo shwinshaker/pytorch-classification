@@ -8,8 +8,10 @@
 debug=0 # 
 
 model="resnet" # transresnet
-depth=20
-grow=true # false # true # true # false # true # false # true
+dataset="imagenet" # cifar10
+# dataset="cifar10"
+depth=20 # 8
+grow=false # true # false # true # true # false # true # false # true
 # grow start -------------------------
 mode='fixed' # 'adapt'
 maxdepth=74
@@ -32,8 +34,8 @@ dupEpoch=($1 $2)
 # grow end -------------------------
 
 # regular hypers -----------
-epochs=164
-scheduler='constant' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+epochs=90 # 164 # 
+scheduler='cosine' # 'step' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
 # schedule=(60 $1) # test with the same schedule
@@ -41,12 +43,15 @@ schedule=($1 $2) # test with the same schedule
 # schedule=(10 30 70 110) # test with the same schedule
 # schedule=($1 60) # test with the same schedule
 # schedule=(20)
-lr='0.1'
+lr='0.5'
 gamma='0.9' # 0.1 # if scheduler == step or expo
 weight_decay='1e-4'
-train_batch='128'
+train_batch='256' # '128'
+test_batch='200' # '100'
 
-gpu_id=$3 #5
+gpu_id='4,5,6,7' # 4 # $3 #5
+# gpu_id='1,2' # 4 # $3 #5
+workers=64 # 32 # 0
 log_file="train.out"
 suffix="-lr=${lr//'.'/'-'}"
 
@@ -77,7 +82,7 @@ if [ "$model" = resnet ]; then
 fi
 
 if (( debug > 0 )); then
-    # epochs=20
+    epochs=10
     dupEpoch=(2 4)
     schedule=(2 4)
     dir="Debug-"$dir
@@ -87,7 +92,7 @@ fi
 #     dir=$dir-$suffix
 # fi
 
-checkpoint="checkpoints/cifar10/$dir"
+checkpoint="checkpoints/$dataset/$dir"
 [[ -f $checkpoint ]] && rm $checkpoint
 i=1
 while [ -d $checkpoint ]; do
@@ -115,10 +120,10 @@ cp -r models $checkpoint
 
 if [ "$grow" = true ]; then
     # python cifar.py -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id  --debug-batch-size $debug 2>&1 | tee $checkpoint"/"$log_file
-    python cifar.py -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id  --debug-batch-size $debug > $checkpoint"/"$log_file 2>&1 &
+    python cifar.py -d $dataset -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint $checkpoint --gpu-id $gpu_id --workers $workers --debug-batch-size $debug > $checkpoint"/"$log_file 2>&1 &
 else
     # python cifar.py -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule ${schedule[@]} --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id --debug-batch-size $debug | tee $checkpoint"/"$log_file
-    python cifar.py -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule ${schedule[@]} --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --checkpoint $checkpoint --gpu-id $gpu_id --debug-batch-size $debug > $checkpoint"/"$log_file 2>&1 &
+    python cifar.py -d $dataset -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule ${schedule[@]} --gamma $gamma --wd $weight_decay --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint $checkpoint --gpu-id $gpu_id --workers $workers --debug-batch-size $debug # > $checkpoint"/"$log_file # 2>&1 &
 fi
 pid=$!
 echo "[$pid] [Path]: $checkpoint"

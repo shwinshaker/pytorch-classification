@@ -16,6 +16,9 @@ class Hooker(object):
 
     def hook(self, block, input, output):
         self.input = input
+        # print(type(self.input))
+        # print(len(self.input))
+        # print(self.input[0].size())
         self.output = output
 
     def unhook(self):
@@ -24,7 +27,7 @@ class Hooker(object):
 
 class LayerHooker(object):
     def __init__(self, layer, layername=None, skipfirst=True,
-                 scale_stepsize=False):
+                 scale_stepsize=False, device=None):
 
         self.hookers = []
         for block in layer:
@@ -42,6 +45,8 @@ class LayerHooker(object):
 
         self.scale_stepsize = scale_stepsize
 
+        self.device = device
+
     def __len__(self):
         return len(self.hookers)
 
@@ -58,6 +63,10 @@ class LayerHooker(object):
         for hooker in self.hookers[self.start_block:]:
             activations.append(hooker.input[0].detach())
         activations.append(hooker.output.detach())
+
+        # force to one device to avoid device inconsistency
+        if self.device:
+            activations = [act.to(self.device) for act in activations]
 
         residuals = []
         for b, (input, output) in enumerate(zip(activations[:-1], activations[1:])):
@@ -98,7 +107,7 @@ class LayerHooker(object):
 
 
 class ModelHooker(object):
-    def __init__(self, model_name, dpath, resume=False, atom='block', scale_stepsize=False, scale=True):
+    def __init__(self, model_name, dpath, resume=False, atom='block', scale_stepsize=False, scale=True, device=None):
         self.dpath = dpath
 
         self.atom = atom
@@ -115,11 +124,15 @@ class ModelHooker(object):
         if not resume:
             self.logger.set_names(['epoch', 'layer1', 'layer2', 'layer3'])
 
+        self.device = device
+
     def hook(self, model):
         self.layerHookers = []
-        for key in model._modules:
+        # for key in model._modules:
+        for key in model.module._modules:
             if key.startswith('layer'):
-                self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize))
+                # self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize))
+                self.layerHookers.append(LayerHooker(model.module._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize, device=self.device))
 
     def __len__(self):
         return len(self.layerHookers)
@@ -141,7 +154,9 @@ class ModelHooker(object):
                 # res_norms = [2 * res / (act0 + act1) for res, act0, act1 in zip(res_norms, act_norms[:-1], act_norms[1:])])
 
             err_norms.append(acc_norms)
+        # print(err_norms)
         avg_err_norms = [statistics.mean(errs) for errs in err_norms]
+        # print(avg_err_norms)
         avg_avg_err_norm = statistics.mean([e for errs in err_norms for e in errs])
 
         self.history_norm.append(norms)
