@@ -128,11 +128,18 @@ class ModelHooker(object):
 
     def hook(self, model):
         self.layerHookers = []
+
+        if torch.cuda.device_count() > 1:
+            model_module = model.module
+        else:
+            model_module = model
         # for key in model._modules:
-        for key in model.module._modules:
+        # for key in model.module._modules:
+        for key in model_module._modules:
             if key.startswith('layer'):
                 # self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize))
-                self.layerHookers.append(LayerHooker(model.module._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize, device=self.device))
+                # self.layerHookers.append(LayerHooker(model.module._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize, device=self.device))
+                self.layerHookers.append(LayerHooker(model_module._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize, device=self.device))
 
     def __len__(self):
         return len(self.layerHookers)
