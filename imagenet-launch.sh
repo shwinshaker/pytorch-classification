@@ -8,13 +8,13 @@
 debug=10 # 
 
 model="resnet" # transresnet
-dataset="cifar100" # cifar10
+dataset="imagenet" # cifar10
 # dataset="cifar10"
-depth=74 # 20 # 3*2 * num_blocks_per_layer + 2
-grow=false # true # true # false # true # false # true
+depth=26  # 4*2 * num_blocks_per_layer + 2
+grow=true # false # true # true # false # true # false # true
 # grow start -------------------------
 mode='fixed' # 'adapt'
-maxdepth=74
+maxdepth=98
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
@@ -27,28 +27,29 @@ window=7
 # ----- fixed
 # dupEpoch=(60 130)
 # dupEpoch=(80 130)
-# dupEpoch=(60 110)
-dupEpoch=($1 $2)
+# dupEpoch=(60 $1)
+dupEpoch=(31 61) # ($1 $2)
 # dupEpoch=(70 110)
 # dupEpoch='even' #'warm'
 # grow end -------------------------
 
 # regular hypers -----------
-epochs=164 # 
-scheduler='cosine' # 'step' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+epochs=90 # 164 # 
+scheduler='cosine' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
-# schedule=(60 110) # test with the same schedule
+# schedule=(60 $1) # test with the same schedule
+schedule=(31 61) # ($1 $2) # test with the same schedule
 # schedule=(10 30 70 110) # test with the same schedule
-schedule=($1 $2) # test with the same schedule
+# schedule=($1 60) # test with the same schedule
 # schedule=(20)
 lr='0.5'
-gamma='0.9' # 0.1 # if scheduler == step or expo
+gamma='0.1' # 0.1 if scheduler == step or expo  # dummy if scheduler == 'cosine'
 weight_decay='1e-4'
-train_batch='128'
-test_batch='100'
+train_batch='256' # '128'
+test_batch='200' # '100'
 
-gpu_id=$3 # 4 # $3 #5
+gpu_id='1,5' # 4 # $3 #5
 # gpu_id='1,2' # 4 # $3 #5
 workers=32 # 0
 log_file="train.out"

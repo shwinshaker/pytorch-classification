@@ -21,23 +21,17 @@ import torch.optim as optim
 import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger
-from utils import StateDict, ModelArch, ChunkSampler
-from utils import str2bool
-from utils import is_powerOfTwo
+from utils import ModelArch
+from utils import str2bool, is_powerOfTwo
 
 from utils import scheduler as schedulers
 
 import warnings
 
 torch.autograd.set_detect_anomaly(True)
-
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
 
 scheduler_names = sorted(name for name in schedulers.__dict__
     if name.islower() and not name.startswith("__")
@@ -76,11 +70,11 @@ parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metava
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 # Architecture
-parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet20',
-                    choices=model_names,
-                    help='model architecture: ' +
-                        ' | '.join(model_names) +
-                        ' (default: resnet18)')
+parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet') # ,
+#                     choices=model_names,
+#                     help='model architecture: ' +
+#                         ' | '.join(model_names) +
+#                         ' (default: resnet18)')
 parser.add_argument('--depth', type=int, default=20, help='Model depth.')
 parser.add_argument('--block-name', type=str, default='BasicBlock',
                     help='the building block for Resnet and Preresnet: BasicBlock, Bottleneck (default: Basicblock for cifar10/cifar100)')
@@ -114,6 +108,17 @@ parser.add_argument('--scale-stepsize', type=str2bool, const=True, default=False
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
+
+# switch models dir
+if args.dataset.lower().startswith('cifar'):
+    import models.cifar as models
+else:
+    import models.imagenet as models
+
+model_names = sorted(name for name in models.__dict__
+    if name.islower() and not name.startswith("__")
+    and callable(models.__dict__[name]))
+
 
 # sanity check
 def get_nbpl(depth):
@@ -211,8 +216,6 @@ def main():
 
     if not os.path.isdir(args.checkpoint):
         mkdir_p(args.checkpoint)
-
-
 
     # Data
     print('==> Preparing dataset %s' % args.dataset)
@@ -368,6 +371,7 @@ def main():
     print("     depth: %i" % args.depth)
     print(model)
     print("     ----------------------------------------------------------------------")
+    print("     dataset: %s" % args.dataset)
 
     print("     --------------------------- hypers ----------------------------------")
     print("     Epochs: %i" % args.epochs)
@@ -411,7 +415,7 @@ def main():
     print("     ---------------------------------------------------------------------")
 
     # Resume
-    title = 'cifar-10-' + args.arch
+    title = args.dataset + '-' + args.arch
     if args.resume:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
@@ -431,7 +435,7 @@ def main():
     hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale, scale_stepsize=args.scale_stepsize, device=device)
     hooker.hook(model)
     # model architecture tracker
-    modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom)
+    modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom, dataset=args.dataset)
     # timer
     timeLogger = Logger(os.path.join(args.checkpoint, 'timer.txt'), title=title)
     timeLogger.set_names(['epoch', 'training-time(min)'])

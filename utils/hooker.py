@@ -29,9 +29,10 @@ class LayerHooker(object):
     def __init__(self, layer, layername=None, skipfirst=True,
                  scale_stepsize=False, device=None):
 
-        self.hookers = []
-        for block in layer:
-            self.hookers.append(Hooker(block))
+        # self.hookers = []
+        # for block in layer:
+        #     self.hookers.append(Hooker(block))
+        self.hookers = [Hooker(block) for block in layer]
 
         if not layername:
             self.layername = ''
@@ -57,17 +58,19 @@ class LayerHooker(object):
         '''
             It's very weird that input is a tuple including `device`, but output is just a tensor..
         '''
+        # activations
+        # if orignial model, the residual of the first block can't be calculated because of inconsistent dimension
         activations = []
-
-        # if orignial model, the residual of the first block can't be calculated
         for hooker in self.hookers[self.start_block:]:
             activations.append(hooker.input[0].detach())
         activations.append(hooker.output.detach())
 
         # force to one device to avoid device inconsistency
+        #    or can try just convert to tensor
         if self.device:
             activations = [act.to(self.device) for act in activations]
 
+        # residuals
         residuals = []
         for b, (input, output) in enumerate(zip(activations[:-1], activations[1:])):
             res = output - input
@@ -75,6 +78,7 @@ class LayerHooker(object):
                 res /= arch[b]
             residuals.append(res)
 
+        # truncated errors / or accelerations
         accelerations = []
         for last, now in zip(residuals[:-1], residuals[1:]):
             accelerations.append(now - last)
@@ -133,12 +137,9 @@ class ModelHooker(object):
             model_module = model.module
         else:
             model_module = model
-        # for key in model._modules:
-        # for key in model.module._modules:
+
         for key in model_module._modules:
             if key.startswith('layer'):
-                # self.layerHookers.append(LayerHooker(model._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize))
-                # self.layerHookers.append(LayerHooker(model.module._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize, device=self.device))
                 self.layerHookers.append(LayerHooker(model_module._modules[key], layername=key, skipfirst=self.skipfirst, scale_stepsize=self.scale_stepsize, device=self.device))
 
     def __len__(self):
@@ -151,22 +152,25 @@ class ModelHooker(object):
         norms = []
         err_norms = []
         for layerHooker, arch in zip(self.layerHookers, archs):
+            if len(layerHooker) < 3:
+                print('Cannot calculater errs for this layer!')
+                return None
             act_norms, res_norms, acc_norms = layerHooker.draw(arch)
             norms.append([act_norms, res_norms, acc_norms])
 
-            # scale acceleration by residuals
-            # scale residual by activations
+            # this only works for in-situ err check, won't affect output norms
             if self.scale:
-                acc_norms = [2 * acc / (res0 + res1) for acc, res0, res1 in zip(acc_norms, res_norms[:-1], res_norms[1:])]
+                # scale acceleration by residuals
+                err_norms.append([2 * acc / (res0 + res1) for acc, res0, res1 in zip(acc_norms, res_norms[:-1], res_norms[1:])])
+            else:
+                err_norms.append(acc_norms)
+                # scale residual by activations
                 # res_norms = [2 * res / (act0 + act1) for res, act0, act1 in zip(res_norms, act_norms[:-1], act_norms[1:])])
 
-            err_norms.append(acc_norms)
-        # print(err_norms)
-        avg_err_norms = [statistics.mean(errs) for errs in err_norms]
-        # print(avg_err_norms)
-        avg_avg_err_norm = statistics.mean([e for errs in err_norms for e in errs])
-
         self.history_norm.append(norms)
+
+        avg_err_norms = [statistics.mean(errs) for errs in err_norms]
+        avg_avg_err_norm = statistics.mean([e for errs in err_norms for e in errs])
         self.logger.append([epoch, *avg_err_norms])
 
         if self.atom == 'block':

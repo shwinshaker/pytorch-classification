@@ -16,13 +16,12 @@ class StateDict:
     cpu model: prefix = ''
     """
 
-    prefix = '' # 'module.'
-    l = 0 # 1
-    b = 1 # 2
+    """
+        todo: num_layers can be infered from the number of blocks startswith layers
+            like what we do in utils/hooker
+    """
 
-    num_layers = 3
-
-    def __init__(self, model, operation='duplicate', atom='block', special_first=True):
+    def __init__(self, model, operation='duplicate', atom='block', special_first=True, num_layers=3):
         self.state_dict = model.state_dict()
         self.best_state_dict = None
 
@@ -33,6 +32,17 @@ class StateDict:
         self.atom = atom
 
         self.special_first = special_first
+
+        self.num_layers = num_layers
+
+        if torch.cuda.device_count() > 1:
+            self.prefix = 'module'
+            self.l = 1
+            self.b = 2
+        else:
+            self.prefix = ''
+            self.l = 0  # index of name of layer in the model string
+            self.b = 1  # index of name of block in the model string
 
     def update(self, epoch, is_best, model):
         self.state_dict = model.state_dict()
@@ -195,10 +205,9 @@ class ModelArch:
     '''
         arch: stepsize in each block in each layer
     '''
-    num_layers = 3
 
     def __init__(self, model_name, model, depth, max_depth=None, dpath=None,
-                 operation='duplicate', atom='block'):
+                 operation='duplicate', atom='block', dataset=None):
 
         assert 'resnet' in model_name.lower(), 'model_name is fixed to resnet'
 
@@ -208,17 +217,26 @@ class ModelArch:
         if model_name.startswith('transresnet'):
             special_first = False
 
-        assert (depth - 2) % 6 == 0, 'When use basicblock, depth should be 6n+2, e.g. 20, 32, 44, 56, 110, 1202'
-        assert (max_depth - 2) % 6 == 0, 'When use basicblock, depth should be 6n+2, e.g. 20, 32, 44, 56, 110, 1202'
+        # cifar: 3 layers # imagenet: 4 layers
+        if dataset.startswith('cifar'):
+            self.num_layers = 3
+        elif dataset.startswith('imagenet'):
+            self.num_layers = 4
+        else:
+            raise KeyError(dataset)
 
-        self.blocks_per_layer = (depth - 2) // 6
+        assert (depth - 2) % (self.num_layers * 2) == 0, 'When use basicblock, depth should be %in+2, e.g. 20, 32, 44, 56, 110, 1202' % (self.num_layers * 2)
+        assert (max_depth - 2) % (self.num_layers * 2) == 0, 'When use basicblock, depth should be %in+2, e.g. 20, 32, 44, 56, 110, 1202' % (self.num_layers * 2)
+
+
+        self.blocks_per_layer = (depth - 2) // (self.num_layers * 2)
         self.arch = [[1.0 for _ in range(self.blocks_per_layer)] for _ in range(self.num_layers)]
         self.arch_history = [self.arch]
         self.best_arch = None
         self.max_depth = max_depth
-        self.max_blocks_per_layer = (max_depth - 2) // 6
+        self.max_blocks_per_layer = (max_depth - 2) // (self.num_layers * 2)
 
-        # sanity check
+        # grow scheme sanity check
         if atom not in ['block', 'layer', 'model']:
             raise KeyError('Grow atom %s not allowed!' % atom)
         self.atom = atom
@@ -228,7 +246,7 @@ class ModelArch:
         self.operation = operation
 
         # state dictionary
-        self.state_dict = StateDict(model, operation=operation, atom=atom, special_first=special_first)
+        self.state_dict = StateDict(model, operation=operation, atom=atom, special_first=special_first, num_layers=self.num_layers)
 
         # model architecture and stepsize logger
         self.dpath = dpath
@@ -395,7 +413,7 @@ class ModelArch:
         ''' 
             fancy print of arch
         '''
-        return '%i-%i-%i' % tuple(self.get_num_blocks_all_layer(best=best))
+        return '-'.join(['%i'] * self.num_layers)  % tuple(self.get_num_blocks_all_layer(best=best))
 
     def close(self):
         self.logger.close()
