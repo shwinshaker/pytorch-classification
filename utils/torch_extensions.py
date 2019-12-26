@@ -36,7 +36,7 @@ class StateDict:
         self.num_layers = num_layers
 
         if torch.cuda.device_count() > 1:
-            self.prefix = 'module'
+            self.prefix = 'module.'
             self.l = 1
             self.b = 2
         else:
