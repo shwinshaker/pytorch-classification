@@ -32,25 +32,23 @@ class BasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.stepsize = stepsize
-
     def forward(self, x):
-        out = x
+        residual = x
 
-        residual = self.bn1(x)
-        residual = self.relu(residual)
-        residual = self.conv1(residual)
+        out = self.bn1(x)
+        out = self.relu(out)
+        out = self.conv1(out)
 
-        residual = self.bn2(residual)
-        residual = self.relu(residual)
-        residual = self.conv2(residual)
-
-        residual *= self.stepsize
+        out = self.bn2(out)
+        out = self.relu(out)
+        out = self.conv2(out)
 
         if self.downsample is not None:
-            out = self.downsample(x)
+            residual = self.downsample(x)
 
-        return out + residual
+        out += residual
+
+        return out
 
 
 class Bottleneck(nn.Module):
@@ -94,45 +92,29 @@ class Bottleneck(nn.Module):
 
 class PreResNet(nn.Module):
 
-    num_layers = 3
-
-    def __init__(self, depth=None, num_classes=1000, block_name='BasicBlock', archs=None):
+    def __init__(self, depth, num_classes=1000, block_name='BasicBlock'):
         super(PreResNet, self).__init__()
-        if not depth:
-            assert archs, 'Architecture must be given for unknown depth!'
-
-        block = BasicBlock
-
-        if depth:
+        # Model type specifies number of layers for CIFAR-10 model
+        if block_name.lower() == 'basicblock':
             assert (depth - 2) % 6 == 0, 'When use basicblock, depth should be 6n+2, e.g. 20, 32, 44, 56, 110, 1202'
-            num_blocks_per_layer = (depth - 2) // 6
-
-        # # growing blocks
-        if not archs:
-            archs = [[1.0 for _ in range(num_blocks_per_layer)] for _ in range(self.num_layers)]
-
-        # # Model type specifies number of layers for CIFAR-10 model
-        # if block_name.lower() == 'basicblock':
-        #     assert (depth - 2) % 6 == 0, 'When use basicblock, depth should be 6n+2, e.g. 20, 32, 44, 56, 110, 1202'
-        #     n = (depth - 2) // 6
-        #     block = BasicBlock
-        # elif block_name.lower() == 'bottleneck':
-        #     assert (depth - 2) % 9 == 0, 'When use bottleneck, depth should be 9n+2, e.g. 20, 29, 47, 56, 110, 1199'
-        #     n = (depth - 2) // 9
-        #     block = Bottleneck
-        # else:
-        #     raise ValueError('block_name shoule be Basicblock or Bottleneck')
+            n = (depth - 2) // 6
+            block = BasicBlock
+        elif block_name.lower() == 'bottleneck':
+            assert (depth - 2) % 9 == 0, 'When use bottleneck, depth should be 9n+2, e.g. 20, 29, 47, 56, 110, 1199'
+            n = (depth - 2) // 9
+            block = Bottleneck
+        else:
+            raise ValueError('block_name shoule be Basicblock or Bottleneck')
 
         self.inplanes = 16
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1,
                                bias=False)
-        self.layer1 = self._make_layer(block, 16, archs[0])
-        self.layer2 = self._make_layer(block, 32, archs[1], stride=2)
-        self.layer3 = self._make_layer(block, 64, archs[2], stride=2)
+        self.layer1 = self._make_layer(block, 16, n)
+        self.layer2 = self._make_layer(block, 32, n, stride=2)
+        self.layer3 = self._make_layer(block, 64, n, stride=2)
         self.bn = nn.BatchNorm2d(64 * block.expansion)
         self.relu = nn.ReLU(inplace=True)
-        # self.avgpool = nn.AvgPool2d(8)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avgpool = nn.AvgPool2d(8)
         self.fc = nn.Linear(64 * block.expansion, num_classes)
 
         for m in self.modules():
@@ -143,7 +125,7 @@ class PreResNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def _make_layer(self, block, planes, arch, stride=1):
+    def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
@@ -152,12 +134,10 @@ class PreResNet(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, stepsize=arch[0]))
+        layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
-        # for i in range(1, blocks):
-        for stepsize in arch[1:]:
-            # layers.append(block(self.inplanes, planes))
-            layers.append(block(self.inplanes, planes, stepsize=stepsize))
+        for i in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
 
         return nn.Sequential(*layers)
 
