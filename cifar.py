@@ -468,9 +468,9 @@ def main():
         train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
         timeLogger.append([epoch, (time.time() - end)/60])
 
-        # errs = hooker.draw(epoch, archs=modelArch.arch, atom=args.err_atom, scale=args.scale)
+        # errs = hooker.output(epoch, archs=modelArch.arch, atom=args.err_atom, scale=args.scale)
 
-        val_loss, val_acc = test(valloader, model, criterion, epoch, use_cuda)
+        val_loss, val_acc = test(valloader, model, criterion, epoch, use_cuda, hooker)
 
         # print('\nEpoch: [%d | %d] LR: %f Train-Loss: %.4f Val-Loss: %.4f Train-Acc: %.4f Val-Acc: %.4f' % (epoch + 1, args.epochs, state['lr'], train_loss, val_loss, train_acc, val_acc))
         print('\nEpoch: [%d | %d] LR: %f Train-Loss: %.4f Val-Loss: %.4f Train-Acc: %.4f Val-Acc: %.4f' % (epoch + 1, args.epochs, scheduler.lr_(), train_loss, val_loss, train_acc, val_acc))
@@ -506,7 +506,8 @@ def main():
         modelArch.update(epoch, is_best, model)
         # state dict is updated for this step: updated by the newly trained weights
         # model arch is not updated, it will update along with grow
-        errs = hooker.draw(epoch, archs=modelArch.arch)
+        errs = hooker.output(epoch)
+        # errs = hooker.draw(epoch, archs=modelArch.arch)
 
         # learning rate scheduler
         scheduler.step_(epoch, errs)
@@ -587,7 +588,7 @@ def main():
 
     print('\nBest val acc: %.4f at %i' % (best_val_acc, best_epoch)) # this is the validation acc
 
-    test_loss, test_acc = test(testloader, model, criterion, -1, use_cuda)
+    test_loss, test_acc = test(testloader, model, criterion, -1, use_cuda, hooker=None)
     # test_loss, test_acc = test(valloader, model, criterion, -1, use_cuda)
     print('Final arch: %s' % modelArch)
     print('Final Test Loss:  %.4f, Final Test Acc:  %.4f' % (test_loss, test_acc))
@@ -605,7 +606,7 @@ def main():
     best_model.to(device) # --
 
     best_model.load_state_dict(best_checkpoint['state_dict'])
-    test_loss, test_acc = test(testloader, best_model, criterion, -1, use_cuda)
+    test_loss, test_acc = test(testloader, best_model, criterion, -1, use_cuda, hooker=None)
     # test_loss, test_acc = test(valloader, best_model, criterion, -1, use_cuda)
     print('Best arch: %s' % modelArch.__str__(best=True))
     print('Best Test Loss:  %.4f, Best Test Acc:  %.4f' % (test_loss, test_acc))
@@ -676,7 +677,7 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     bar.finish()
     return (losses.avg, top1.avg)
 
-def test(testloader, model, criterion, epoch, use_cuda):
+def test(testloader, model, criterion, epoch, use_cuda, hooker):
     '''
         `epoch` is never used
     '''
@@ -707,6 +708,9 @@ def test(testloader, model, criterion, epoch, use_cuda):
         with torch.no_grad():
             outputs = model(inputs)
             loss = criterion(outputs, targets)
+            # justin: 12-27
+            if hooker:
+                hooker.collect()
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
