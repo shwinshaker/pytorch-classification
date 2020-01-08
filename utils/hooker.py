@@ -22,9 +22,12 @@ class Record:
             self.reduce = self.__norm
             self.batch_reduce = self.__batch_norm
         elif reduction == 'pc':
-            self.reduce = lambda x: x
-            self.batch_reduce = self.__batch_pc
             self.pca = pca
+            if not self.pca:
+                self.reduce = lambda x: x
+            else:
+                self.reduce = self.__pca_transform
+            self.batch_reduce = self.__batch_pc
             self.n = n
         else:
             raise KeyError(reduction)
@@ -39,35 +42,43 @@ class Record:
         for i in range(len(self)):
             self.li[i] = self.concat(self.li[i], self.reduce(li[i]))
 
+    def __concat(self, tensor1, tensor2):
+        assert(type(tensor1) == type(tensor2))
+        if isinstance(tensor1, torch.Tensor):
+            return torch.cat((tensor1, tensor2), dim=0)
+        return np.concatenate((tensor1, tensor2), axis=0)
+
     def __norm(self, tensor):
         # the activation / feature map of one block should be 4-dim tensor
         assert(len(tensor.size()) == 4)
         # only keep the first dimension, i.e. data batch
         return torch.tensor([torch.norm(tensor[i,:]) for i in range(tensor.size()[0])])
 
-    def __concat(self, tensor1, tensor2):
-        return torch.cat((tensor1, tensor2), dim=0)
-
     def __batch_norm(self):
         self.li = [torch.norm(e).item() for e in self.li]
+
+    def __pca_transform(self, tensor):
+        return self.pca.transform(self.__ravel(tensor))
     
     def __batch_pc(self):
-
-        def rectify(tensor):
-            # print(tensor.size())
-            mat = tensor.cpu().numpy()
-            return mat.reshape(mat.shape[0], -1)
-
         # fit pca only by the first feature map (the input of the first block)
         # and only for the first epoch
         if not self.pca:
             print('fit pca! This should happen only once for each layer!')
             self.pca = PCA(n_components=self.n)
-            self.pca.fit(rectify(self.li[0]))
+            print(self.li[0].size())
+            self.pca.fit(self.__ravel(self.li[0]))
+            self.reduce = self.__pca_transform # we can now reduce the tensor per batch size to reduce memory cost
+            self.li = [np.mean(self.__pca_transform(e), axis=0) for e in self.li]
+            return
 
-        self.li = [np.mean(self.pca.transform(rectify(e)), axis=0) for e in self.li]
+        print(self.li[0].shape)
 
-    # def __pca_transform(self):
+        self.li = [np.mean(e, axis=0) for e in self.li]
+
+    def __ravel(self, tensor):
+        mat = tensor.cpu().numpy()
+        return mat.reshape(mat.shape[0], -1)
 
     def __len__(self):
         return len(self.li)
