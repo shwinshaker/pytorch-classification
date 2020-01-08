@@ -5,6 +5,9 @@ import statistics
 import pickle
 from sklearn.decomposition import PCA
 import copy
+from collections import defaultdict
+import numpy as np
+from more_itertools import peekable
 import warnings
 from . import Logger
 
@@ -51,7 +54,7 @@ class Record:
     def __batch_pc(self):
 
         def rectify(tensor):
-            print(tensor.size())
+            # print(tensor.size())
             mat = tensor.cpu().numpy()
             return mat.reshape(mat.shape[0], -1)
 
@@ -62,7 +65,9 @@ class Record:
             self.pca = PCA(n_components=self.n)
             self.pca.fit(rectify(self.li[0]))
 
-        self.li = [self.pca.transform(rectify(e)) for e in self.li]
+        self.li = [np.mean(self.pca.transform(rectify(e)), axis=0) for e in self.li]
+
+    # def __pca_transform(self):
 
     def __len__(self):
         return len(self.li)
@@ -86,7 +91,7 @@ class Hooker(object):
 
 
 class LayerHooker(object):
-    def __init__(self, layer, layername=None, skipfirst=True, scale_stepsize=False, device=None):
+    def __init__(self, layer, layername=None, skipfirst=True, scale_stepsize=False, device=None, save_activation=False, pca=None):
 
         self.hookers = [Hooker(block) for block in layer]
 
@@ -107,17 +112,63 @@ class LayerHooker(object):
 
         self.device = device
 
-        self.init_record(n=2)
+        self.save_activation = save_activation
+        self.pca = pca
+        self.init_record()
 
-    def init_record(self, n=2, pca=None):
+    def init_record(self):
         # recorded feature maps
         self.records = dict()
         self.records['act_norm'] = Record(reduction='norm')
         self.records['res_norm'] = Record(reduction='norm')
         self.records['acc_norm'] = Record(reduction='norm')
-        self.records['act_pc2'] = Record(reduction='pc', n=n, pca=pca)
+        if self.save_activation:
+            self.records['act_pc2'] = Record(reduction='pc', n=2, pca=self.pca)
+    
+    # def reset_record(self):
+    #     if self.save_activation:
+    #         assert('act_pc2' in self.records)
+    #         pca = self.records['act_pc2'].pca
 
-    def get_activations(self):
+    #     self.records = dict()
+    #     self.records['act_norm'] = Record(reduction='norm')
+    #     self.records['res_norm'] = Record(reduction='norm')
+    #     self.records['acc_norm'] = Record(reduction='norm')
+    #     if self.save_activation:
+    #         self.records['act_pc2'] = Record(reduction='pc', pca=pca)
+
+    def collect(self):
+        activations, residuals, accelerations = self._get_activations()
+
+        # norms
+        self.records['act_norm'].absorb(activations)
+        self.records['res_norm'].absorb(residuals)
+        self.records['acc_norm'].absorb(accelerations)
+
+        if self.save_activation:
+            # pcs
+            self.records['act_pc2'].absorb(activations)
+
+    def output(self):
+        for key in self.records:
+            # print(key, records[key].li[0].size())
+            # each record should contain the number of validation examples
+            self.records[key].batch_reduce()
+
+        if not self.pca:
+            self.pca = self.records['act_pc2'].pca
+
+        # reset records
+        records_ = copy.deepcopy(self.records)
+        # self.reset_record()
+        self.init_record()
+        return records_
+
+    def close(self):
+        for hooker in self.hookers:
+            hooker.unhook()
+
+    def _get_activations(self, detach=True):
         """
             It's very weird that input is a tuple including `device`, but output is just a tensor..
         """
@@ -125,11 +176,18 @@ class LayerHooker(object):
         # if original model, the residual of the first block can't be calculated because of inconsistent dimension
         activations = []
         for hooker in self.hookers[self.start_block:]:
-            # activations.append(hooker.input[0].cpu().detach())
-            activations.append(hooker.input[0].detach())
+            # activations.append(hooker.input[0].cpu().detach()) # cpu is much slower than on gpu
+            if detach:
+                activations.append(hooker.input[0].detach())
+            else:
+                activations.append(hooker.input[0])
         # activations.append(hooker.output.cpu().detach())
-        activations.append(hooker.output.detach())
+        if detach:
+            activations.append(hooker.output.detach())
+        else:
+            activations.append(hooker.output)
 
+        # migrate to single gpu when multiple gpu distributed training
         if self.device:
             activations = [act.to(self.device) for act in activations]
 
@@ -149,33 +207,6 @@ class LayerHooker(object):
 
         return activations, residuals, accelerations
 
-    def collect(self):
-        activations, residuals, accelerations = self.get_activations()
-
-        # norms
-        self.records['act_norm'].absorb(activations)
-        self.records['res_norm'].absorb(residuals)
-        self.records['acc_norm'].absorb(accelerations)
-
-        # pcs
-        self.records['act_pc2'].absorb(activations)
-
-    def output(self):
-        for key in self.records:
-            # print(key, records[key].li[0].size())
-            # each record should contain the number of validation examples
-            self.records[key].batch_reduce()
-
-        # reset records
-        records_ = copy.deepcopy(self.records)
-        # inherit pca from the last epoch
-        self.init_record(pca=self.records['act_pc2'].pca)
-        return records_
-
-    def close(self):
-        for hooker in self.hookers:
-            hooker.unhook()
-
     def __len__(self):
         return len(self.hookers)
 
@@ -184,7 +215,9 @@ class LayerHooker(object):
 
 
 class ModelHooker(object):
-    def __init__(self, model_name, dpath, resume=False, atom='block', scale_stepsize=False, scale=True, device=None):
+    def __init__(self, model_name, dpath, resume=False, atom='block',
+                 scale_stepsize=False, scale=True, device=None, trace=['norm']):
+
         self.dpath = dpath
         self.device = device
 
@@ -200,47 +233,66 @@ class ModelHooker(object):
         if model_name.startswith('transresnet'):
             self.skipfirst=False
 
-        self.history_norm = []
-        self.history_activations = []
+        self.layerHookers = []
+
+        self.trace = trace
+        self.history = defaultdict(list)
+
+        # self.save_norm = False
+        # if 'norm' in trace:
+        #     self.save_norm = True
+        #     self.history_norm = []
+
+        # self.save_activation = False
+        # if 'pc2' in trace:
+        #     self.save_activation = True
+        #     self.history_activations = []
 
         self.logger = Logger(os.path.join(dpath, 'Avg_truncated_err.txt'))
         if not resume:
             self.logger.set_names(['epoch', 'layer1', 'layer2', 'layer3'])
 
     def hook(self, model):
-        self.layerHookers = []
 
+        # inherit pc if rehook
+        pcas = []
+        if 'pc2' in self.trace and self.layerHookers:
+            pcas = [layerHooker.records['act_pc2'].pca for layerHooker in self.layerHookers]
+        pcas = peekable(iter(pcas))
+
+        # switch model module based on dataparallel or not
         if torch.cuda.device_count() > 1:
             model_module = model.module
         else:
             model_module = model
 
+        self.layerHookers = []
         for key in model_module._modules:
             if key.startswith('layer'):
-                self.layerHookers.append(LayerHooker(model_module._modules[key], layername=key, skipfirst=self.skipfirst, device=self.device))
-
-    def __len__(self):
-        return len(self.layerHookers)
-
-    def __iter__(self):
-        return iter(self.layerHookers)
+                self.layerHookers.append(LayerHooker(model_module._modules[key],
+                                                     layername=key,
+                                                     skipfirst=self.skipfirst,
+                                                     device=self.device,
+                                                     save_activation='pc2' in self.trace,
+                                                     pca=next(pcas) if pcas else None))
 
     def collect(self):
         for layerHooker in self.layerHookers:
             layerHooker.collect()
 
     def output(self, epoch):
-        norms = []
         err_norms = []
-        activations = []
+        # norms = []
+        # if self.save_activation:
+        #     activations = []
+        if self.trace:
+            layer_agg = defaultdict(list)
+
         for layerHooker in self.layerHookers:
             if len(layerHooker) < 3:
                 print('Cannot calculater errs for this layer!')
                 return None
             record = layerHooker.output()
-            norms.append([record['act_norm'].li, record['res_norm'].li, record['acc_norm'].li])
-            activations.append(record['act_pc2'].li)
-
             # this only works for in-situ err check, won't affect output norms
             if self.scale:
                 # scale acceleration by residuals
@@ -251,9 +303,15 @@ class ModelHooker(object):
                 err_norms.append(record['acc_norm'].li)
                 # scale residual by activations
                 # res_norms = [2 * res / (act0 + act1) for res, act0, act1 in zip(res_norms, act_norms[:-1], act_norms[1:])])
+            
+            # save some information to file
+            if 'norm' in self.trace:
+                layer_agg['norm'].append([record['act_norm'].li, record['res_norm'].li, record['acc_norm'].li])
+            if 'pc2' in self.trace:
+                layer_agg['pc2'].append(record['act_pc2'].li)
 
-        self.history_norm.append(norms)
-        self.history_activations.append(activations)
+        for key in self.trace:
+            self.history[key].append(layer_agg[key])
 
         avg_err_norms = [statistics.mean(errs) for errs in err_norms]
         self.logger.append([epoch, *avg_err_norms])
@@ -271,10 +329,20 @@ class ModelHooker(object):
         for layerHooker in self.layerHookers:
             layerHooker.close()
         self.logger.close()
-        with open(os.path.join(self.dpath, 'norm_history.pkl'), 'wb') as f:
-            pickle.dump(self.history_norm, f)
 
-        with open(os.path.join(self.dpath, 'activation_history.pkl'), 'wb') as f:
-            pickle.dump(self.history_activations, f)
+        if 'norm' in self.trace:
+            with open(os.path.join(self.dpath, 'norm_history.pkl'), 'wb') as f:
+                pickle.dump(self.history['norm'], f)
+
+        if 'pc2' in self.trace:
+            with open(os.path.join(self.dpath, 'activation_history.pkl'), 'wb') as f:
+                pickle.dump(self.history['pc2'], f)
+
+    def __len__(self):
+        return len(self.layerHookers)
+
+    def __iter__(self):
+        return iter(self.layerHookers)
+
 
 
