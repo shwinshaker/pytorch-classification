@@ -295,13 +295,14 @@ class ModelArch:
         blocks_all_layers = self.get_num_blocks_all_layer()
         skip_layers = set()
         filtered_duplicate_blocks = [pair for pair in li]
+        format_arch = '-'.join(['%i'] * self.num_layers)
         for l, b in li:
             if l in skip_layers:
-                print('Attempt to duplicate layer%i-block%i. Limit exceeded for arch %i-%i-%i.' % (l, b, *blocks_all_layers))
+                print(('Attempt to duplicate layer%i-block%i. Limit exceeded for arch ' + format_arch + '.') % (l, b, *blocks_all_layers))
                 filtered_duplicate_blocks.remove((l, b))
                 continue
             if blocks_all_layers[l] + 1 > self.max_blocks_per_layer:
-                print('Attempt to duplicate layer%i-block%i. Limit exceeded for arch %i-%i-%i.' % (l, b, *blocks_all_layers))
+                print(('Attempt to duplicate layer%i-block%i. Limit exceeded for arch ' + format_arch + '.') % (l, b, *blocks_all_layers))
                 skip_layers.add(l)
                 filtered_duplicate_blocks.remove((l, b))
                 continue
