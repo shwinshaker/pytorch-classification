@@ -28,14 +28,20 @@ from utils import ModelArch
 from utils import str2bool, is_powerOfTwo
 
 from utils import scheduler as schedulers
+from utils import regularizer as regularizers
 
 import warnings
 
 torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(False)
 
 scheduler_names = sorted(name for name in schedulers.__dict__
     if name.islower() and not name.startswith("__")
     and callable(schedulers.__dict__[name]))
+
+regularizer_names = sorted(name for name in regularizers.__dict__
+    if name.islower() and not name.startswith("__")
+    and callable(regularizers.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 + Imagenet Training')
 # Datasets
@@ -56,14 +62,18 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
 parser.add_argument('--drop', '--dropout', default=0, type=float,
                     metavar='Dropout', help='Dropout ratio')
 parser.add_argument('--scheduler', type=str, default='constant', choices=scheduler_names,
-                        help='scheduler type: none, step, cosine, or expo, adapt, acosine, cosine_restart')
-parser.add_argument('--schedule', type=int, nargs='+', default=[81, 122],
-                        help='Decrease learning rate at these epochs. Required if scheduler if true')
+                    help='scheduler type: none, step, cosine, or expo, adapt, acosine, cosine_restart')
+parser.add_argument('--schedule', type=int, nargs='*', default=[81, 122],
+                    help='Decrease learning rate at these epochs. Required if scheduler if true')
 parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
+parser.add_argument('--regularization', type=str, default=None, nargs='?', #choices=regularizer_names,
+                    help='custom regularizer type: none, truncateError')
+parser.add_argument('--r_gamma', default=1e-4, type=float, help='regularization coefficient (default: 1e-4)')
+
 # Checkpoints
 parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoint)')
@@ -105,6 +115,9 @@ parser.add_argument('--backtrack', type=int, default=30, help='History that base
 parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger threshold for growing.  Required if mode = adapt.')
 parser.add_argument('--scale', type=str2bool, const=True, default=True, nargs='?', help='Scale the residual by activations? Scale the acceleration by residuals?')
 parser.add_argument('--scale-stepsize', type=str2bool, const=True, default=False, nargs='?', help='Scale the residual by stepsize?')
+# trace
+parser.add_argument('--hook', type=str2bool, const=True, default=True, nargs='?', help='Hook model to output some info')
+parser.add_argument('--trace', type=str, nargs='+', default=['norm'], help='Trace and output some intermediate products.')
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -209,6 +222,8 @@ if use_cuda:
 best_val_acc = 0  # best test accuracy
 
 def main():
+    time_start = time.time()
+
     global best_val_acc
     best_epoch = 0
 
@@ -322,6 +337,12 @@ def main():
                     depth=args.depth,
                     block_name=args.block_name,
                 )
+    elif args.arch.startswith('midnet'):
+        model = models.__dict__[args.arch](
+                    num_classes=num_classes,
+                    depth=args.depth,
+                    block_name=args.block_name,
+                )
     elif args.arch.startswith('preresnet'):
         model = models.__dict__[args.arch](
                     num_classes=num_classes,
@@ -351,6 +372,14 @@ def main():
     model.to(device) # --
     cudnn.benchmark = True
 
+    hooker = None
+    if args.hook:
+        # model hooker
+        hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale,
+                             scale_stepsize=args.scale_stepsize, device=device,
+                             trace=args.trace)
+        hooker.hook(model)
+
     # criterion and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -372,6 +401,15 @@ def main():
     else:
         raise KeyError(args.scheduler)
 
+    # custom regularization
+    regularizer = None
+    if args.regularization:
+        print("==> creating regularizer '{}'".format(args.regularization))
+        if args.regularization.startswith('truncate_error'):
+            regularizer= regularizers.__dict__[args.regularization](hooker=hooker, r_gamma=args.r_gamma)
+        else:
+            raise KeyError(args.regularization)
+
     # print information
     print("     ----------------------------- %s ----------------------------------" % args.arch)
     print("     depth: %i" % args.depth)
@@ -386,20 +424,25 @@ def main():
     print("     Learning rate: %g" % args.lr)
     print("     Momentum: %g" % args.momentum)
     print("     Weight decay: %g" % args.weight_decay)
-    print("     Learning rate scheduler: %s" % args.scheduler) # 'multi-step consine annealing schedule'
+    print("     Learning rate scheduler: %s" % args.scheduler)  # 'multi-step cosine annealing schedule'
     if args.scheduler in ['step', 'cosine', 'cosine_restart']:
         print("     Learning rate schedule - milestones: ", args.schedule)
     if args.scheduler in ['step', 'expo', 'adapt']:
         print("     Learning rate decay factor: %g" % args.gamma)
+    if args.regularization:
+        print("     Regularization: %s" % args.regularization)
+        print("     Regularization coefficient: %g" % args.r_gamma)
     print("     gpu id: %s" % args.gpu_id)
     print("     num workers: %i" % args.workers)
+    print("     hook: ", args.hook)
+    print("     trace: ", args.trace)
     print("     --------------------------- model ----------------------------------")
     print("     Model: %s" % args.arch)
     print("     depth: %i" % args.depth)
     print("     block: %s" % args.block_name)
     print("     Total params: %.2fM" % (sum(p.numel() for p in model.parameters())/1000000.0))
     if args.grow:
-        if not (args.arch.startswith('resnet') or args.arch.startswith('transresnet')):
+        if not args.arch in ['resnet', 'transresnet', 'preresnet']:
             raise KeyError("model not supported for growing yet.")
         print("     --------------------------- growth ----------------------------------")
         print("     grow mode: %s" % args.mode)
@@ -435,18 +478,20 @@ def main():
         logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title, resume=True)
     else:
         logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title)
-        logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
+        if args.regularization:
+            logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.', 'Regular Loss'])
+        else:
+            logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
 
-    # model hooker
-    hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale, scale_stepsize=args.scale_stepsize, device=device)
-    hooker.hook(model)
+    # ---------- grow -----------
     # model architecture tracker
-    modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom, dataset=args.dataset)
+    if args.grow:
+        modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom, dataset=args.dataset)
     # timer
     timeLogger = Logger(os.path.join(args.checkpoint, 'timer.txt'), title=title)
     timeLogger.set_names(['epoch', 'training-time(min)'])
 
-    # grow
+    # trigger
     if args.grow and args.mode == 'adapt':
         # trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
         # trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.grow_atom, err_atom=args.err_atom) # test
@@ -465,19 +510,23 @@ def main():
 
         # count the training time only
         end = time.time()
-        train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
+        if not regularizer:
+            train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda,
+                                          regularizer=regularizer)
+        else:
+            train_loss, regular_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda,
+                                                        regularizer=regularizer)
         timeLogger.append([epoch, (time.time() - end)/60])
 
         # errs = hooker.output(epoch, archs=modelArch.arch, atom=args.err_atom, scale=args.scale)
-
         val_loss, val_acc = test(valloader, model, criterion, epoch, use_cuda, hooker)
 
-        # print('\nEpoch: [%d | %d] LR: %f Train-Loss: %.4f Val-Loss: %.4f Train-Acc: %.4f Val-Acc: %.4f' % (epoch + 1, args.epochs, state['lr'], train_loss, val_loss, train_acc, val_acc))
         print('\nEpoch: [%d | %d] LR: %f Train-Loss: %.4f Val-Loss: %.4f Train-Acc: %.4f Val-Acc: %.4f' % (epoch + 1, args.epochs, scheduler.lr_(), train_loss, val_loss, train_acc, val_acc))
-
         # append logger file
-        # logger.append([state['lr'], train_loss, val_loss, train_acc, val_acc])
-        logger.append([scheduler.lr_(), train_loss, val_loss, train_acc, val_acc])
+        if not regularizer:
+            logger.append([scheduler.lr_(), train_loss, val_loss, train_acc, val_acc])
+        else:
+            logger.append([scheduler.lr_(), train_loss, val_loss, train_acc, val_acc, regular_loss])
 
         # save model
         is_best = val_acc > best_val_acc
@@ -503,11 +552,14 @@ def main():
                 then `grower.step()`
         '''
 
-        modelArch.update(epoch, is_best, model)
+        if args.grow:
+            modelArch.update(epoch, is_best, model)
         # state dict is updated for this step: updated by the newly trained weights
         # model arch is not updated, it will update along with grow
-        errs = hooker.output(epoch)
-        # errs = hooker.draw(epoch, archs=modelArch.arch)
+        errs = None
+        if args.hook:
+            errs = hooker.output(epoch)
+            # errs = hooker.draw(epoch, archs=modelArch.arch)
 
         # learning rate scheduler
         scheduler.step_(epoch, errs)
@@ -520,7 +572,7 @@ def main():
                     print('New archs: %s' % modelArch)
                     model = models.__dict__[args.arch](num_classes=num_classes,
                                                        block_name=args.block_name,
-                                                       archs = modelArch.arch)
+                                                       archs=modelArch.arch)
                     # if use_cuda:
                     #     model.cuda()
                     if torch.cuda.device_count() > 1:
@@ -531,16 +583,21 @@ def main():
 
                     model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
                     # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                    # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                    # if cosine
+                    optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
                     '''
                         not sure if have to copy the entire momentum history for each weight
                         here just initialize the optimizer again
                     '''
-                    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-                    scheduler.update(optimizer)
-                    hooker.hook(model)
+                    # if multi epoch cosine or cosine_restart
+                    # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+                    scheduler.update(optimizer, epoch=epoch)
+                    if args.hook:
+                        hooker.hook(model)
 
             elif args.mode == 'adapt':
+                assert args.hook
+
                 # propose candidate blocks by truncated errs of each residual block
                 trigger.feed(errs) 
                 err_indices = trigger.trigger(modelArch.get_num_blocks_all_layer()) 
@@ -554,7 +611,7 @@ def main():
 
                         model = models.__dict__[args.arch](num_classes=num_classes,
                                                            block_name=args.block_name,
-                                                           archs = modelArch.arch)
+                                                           archs=modelArch.arch)
                         # if use_cuda:
                         #     model.cuda()
                         if torch.cuda.device_count() > 1:
@@ -567,7 +624,8 @@ def main():
                         # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
                         # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
                         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-                        hooker.hook(model)
+                        if args.hook:
+                            hooker.hook(model)
 
                         # update history shape in trigger
                         trigger.update(err_indices)
@@ -576,12 +634,14 @@ def main():
                 raise KeyError('Grow mode %s not supported!' % args.mode)
 
     scheduler.close()
-    hooker.close()
-    modelArch.close()
+    if args.hook:
+        hooker.close()
     timeLogger.close()
     # err_logger.close()
-    if args.grow and args.mode == 'adapt':
-        trigger.close()
+    if args.grow:
+        modelArch.close()
+        if args.mode == 'adapt':
+            trigger.close()
     logger.close()
     # logger.plot()
     # savefig(os.path.join(args.checkpoint, 'log.eps'))
@@ -590,13 +650,20 @@ def main():
 
     test_loss, test_acc = test(testloader, model, criterion, -1, use_cuda, hooker=None)
     # test_loss, test_acc = test(valloader, model, criterion, -1, use_cuda)
-    print('Final arch: %s' % modelArch)
+    if args.grow:
+        print('Final arch: %s' % modelArch)
     print('Final Test Loss:  %.4f, Final Test Acc:  %.4f' % (test_loss, test_acc))
 
     best_checkpoint = torch.load(os.path.join(args.checkpoint, 'model_best.pth.tar'))
-    best_model = models.__dict__[args.arch](num_classes=num_classes,
-                                            block_name=args.block_name,
-                                            archs = modelArch.best_arch)
+    if args.grow:
+        best_model = models.__dict__[args.arch](num_classes=num_classes,
+                                                block_name=args.block_name,
+                                                archs = modelArch.best_arch)
+    else:
+        best_model = models.__dict__[args.arch](num_classes=num_classes,
+                                                depth=args.depth,
+                                                block_name=args.block_name)
+
     # if use_cuda:
     #     best_model.cuda()
     if torch.cuda.device_count() > 1:
@@ -608,11 +675,13 @@ def main():
     best_model.load_state_dict(best_checkpoint['state_dict'])
     test_loss, test_acc = test(testloader, best_model, criterion, -1, use_cuda, hooker=None)
     # test_loss, test_acc = test(valloader, best_model, criterion, -1, use_cuda)
-    print('Best arch: %s' % modelArch.__str__(best=True))
+    if args.grow:
+        print('Best arch: %s' % modelArch.__str__(best=True))
     print('Best Test Loss:  %.4f, Best Test Acc:  %.4f' % (test_loss, test_acc))
+    print('Wall time: %.3f mins' % ((time.time() - time_start)/60))
 
 
-def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
+def train(trainloader, model, criterion, optimizer, epoch, use_cuda, regularizer=None):
     # switch to train mode
     model.train()
 
@@ -622,6 +691,9 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     top1 = AverageMeter()
     top5 = AverageMeter()
     end = time.time()
+    
+    # 
+    r_losses = AverageMeter()
 
     if args.debug_batch_size:
         bar = Bar('Processing', max=args.debug_batch_size)
@@ -642,6 +714,10 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         # compute output
         outputs = model(inputs)
         loss = criterion(outputs, targets)
+        if regularizer:
+            loss_ = regularizer.loss()
+            loss += loss_
+            r_losses.update(loss_.data.item(), inputs.size(0))
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -675,9 +751,13 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
                     )
         bar.next()
     bar.finish()
+
+    if regularizer:
+        return (losses.avg, r_losses.avg, top1.avg)
+
     return (losses.avg, top1.avg)
 
-def test(testloader, model, criterion, epoch, use_cuda, hooker):
+def test(testloader, model, criterion, epoch, use_cuda, hooker=None):
     '''
         `epoch` is never used
     '''
