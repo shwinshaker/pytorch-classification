@@ -56,6 +56,9 @@ class MultiStepLR_(MultiStepLR):
         self.step()
 
     def lr_(self):
+        lrs = [param_group['lr'] for param_group in self.optimizer.param_groups]
+        assert(len(set(lrs)) == 1)
+        assert(lrs[0] == self.get_lr()[0]), (lrs[0], self.get_lr()[0], self.last_epoch)
         return self.get_lr()[0]
 
     def update(self, optimizer, epoch=None):
