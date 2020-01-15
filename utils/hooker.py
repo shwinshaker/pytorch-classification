@@ -66,13 +66,10 @@ class Record:
         if not self.pca:
             print('fit pca! This should happen only once for each layer!')
             self.pca = PCA(n_components=self.n)
-            print(self.li[0].size())
             self.pca.fit(self.__ravel(self.li[0]))
             self.reduce = self.__pca_transform # we can now reduce the tensor per batch size to reduce memory cost
             self.li = [np.mean(self.__pca_transform(e), axis=0) for e in self.li]
             return
-
-        print(self.li[0].shape)
 
         self.li = [np.mean(e, axis=0) for e in self.li]
 
