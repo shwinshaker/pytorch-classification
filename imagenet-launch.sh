@@ -5,7 +5,7 @@
 ##################################################
 
 #!/bin/bash
-debug=10 # 
+debug=0 # 
 
 model="resnet" # transresnet
 dataset="imagenet" # cifar10
@@ -13,7 +13,7 @@ dataset="imagenet" # cifar10
 depth=26  # 4*2 * num_blocks_per_layer + 2
 grow=true # false # true # true # false # true # false # true
 # grow start -------------------------
-mode='fixed' # 'adapt'
+mode='adapt'
 maxdepth=98
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
@@ -35,11 +35,11 @@ dupEpoch=(31 61) # ($1 $2)
 
 # regular hypers -----------
 epochs=90 # 164 # 
-scheduler='cosine' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+scheduler='acosine' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
 # schedule=(60 $1) # test with the same schedule
-schedule=(31 61) # ($1 $2) # test with the same schedule
+schedule=(30 60) # ($1 $2) # test with the same schedule
 # schedule=(10 30 70 110) # test with the same schedule
 # schedule=($1 60) # test with the same schedule
 # schedule=(20)
@@ -49,11 +49,19 @@ weight_decay='1e-4'
 train_batch='256' # '128'
 test_batch='200' # '100'
 
-gpu_id='1,5' # 4 # $3 #5
+gpu_id='6,7' # 4 # $3 #5
 # gpu_id='1,2' # 4 # $3 #5
 workers=32 # 0
 log_file="train.out"
 suffix="-lr=${lr//'.'/'-'}"
+
+if (( debug > 0 )); then
+    epochs=30 # 3
+    dupEpoch=(2 4)
+    schedule=(5 15) # (2 4)
+fi
+
+# ------------------------------------------------
 
 if [ "$grow" = true ]; then
     if [ "$mode" = 'fixed' ]; then
@@ -74,7 +82,7 @@ else
     fi
 fi
 
-### -------------------------------------------- caution!
+### -------------------------------------------- convention
 
 if [ ! "$scheduler" = constant ] && [ ! "$scheduler" = cosine ] && [ ! "$scheduler" = acosine ] && [ ! "$scheduler" = cosine_restart ] ;then
     dir="$dir-gamma=${gamma//'.'/'-'}"
@@ -89,9 +97,6 @@ if [ "$model" = resnet ]; then
 fi
 
 if (( debug > 0 )); then
-    epochs=3
-    dupEpoch=(2 4)
-    schedule=(2 4)
     dir="Debug-"$dir
 fi
 
@@ -141,7 +146,7 @@ else
 fi
 pid=$!
 echo "[$pid] [Path]: $checkpoint"
-if (( debug > 0 )); then
+if (( debug == 0 )); then
     echo "[$pid] $(date) [Path]: $checkpoint" >> log.txt
 fi
 

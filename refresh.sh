@@ -9,6 +9,9 @@
 # OPTIND=1
 # clear=false
 
+log_file=$1
+[[ -z $log_file ]] && log_file='log.txt'
+
 while getopts "h?c" opt; do
     case "$opt" in
 	h|\?)
@@ -30,19 +33,22 @@ done
 unset n
 while read line
 do
+    state=$(echo $line | awk '{print$1}')
+    [[ $state == 'h' ]] && continue
+
     echo "------------------------------------------------------"
     : $((n++))
     echo "> "$line
     path=$(echo $line | awk -F ':' '{print$NF}')
     # echo "> $path"
-    tail -n 2 $path/train.out
+    tail -n 6 $path/train.out
     epochs=$(($(cat $path/log.txt | wc -l) - 1))
     echo "Epoch: $epochs"
     if [ $epochs -lt 164 ];then
 	echo -e '\033[31m not finished \033[0m ' 
 	[[ $clear ]] && echo "$line [$epochs]" >> log1.txt
     fi
-done < log.txt
+done < $log_file
 
-# mv log1.txt log.txt
+[[ $clear ]] && mv log1.txt log.txt
 

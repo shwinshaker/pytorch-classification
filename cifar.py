@@ -24,6 +24,7 @@ import torchvision.datasets as datasets
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger
+from utils import LipHooker
 from utils import ModelArch
 from utils import str2bool, is_powerOfTwo
 
@@ -116,7 +117,8 @@ parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger th
 parser.add_argument('--scale', type=str2bool, const=True, default=True, nargs='?', help='Scale the residual by activations? Scale the acceleration by residuals?')
 parser.add_argument('--scale-stepsize', type=str2bool, const=True, default=False, nargs='?', help='Scale the residual by stepsize?')
 # trace
-parser.add_argument('--hook', type=str2bool, const=True, default=True, nargs='?', help='Hook model to output some info')
+# parser.add_argument('--hook', type=str2bool, const=True, default=True, nargs='?', help='Hook model to output some info')
+parser.add_argument('--hooker', type=str, choices=['None', 'Model', 'Lip'], default='Model', help='Hooker on model to output some info')
 parser.add_argument('--trace', type=str, nargs='+', default=['norm'], help='Trace and output some intermediate products.')
 
 args = parser.parse_args()
@@ -132,6 +134,9 @@ model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
+# arguments post process
+if args.hooker == 'None':
+    args.hooker = None
 
 # sanity check
 def get_nbpl(depth):
@@ -373,11 +378,16 @@ def main():
     cudnn.benchmark = True
 
     hooker = None
-    if args.hook:
-        # model hooker
-        hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale,
-                             scale_stepsize=args.scale_stepsize, device=device,
-                             trace=args.trace)
+    if args.hooker:
+        if args.hooker == 'Model':
+            # model hooker
+            hooker = ModelHooker(args.arch, args.checkpoint, atom=args.err_atom, scale=args.scale,
+                                 scale_stepsize=args.scale_stepsize, device=device,
+                                 trace=args.trace)
+        elif args.hooker == 'Lip':
+            hooker = LipHooker(args.arch, args.checkpoint, resume=args.resume, device=device)
+        else:
+            raise KeyError(args.hooker)
         hooker.hook(model)
 
     # criterion and optimizer
@@ -434,7 +444,7 @@ def main():
         print("     Regularization coefficient: %g" % args.r_gamma)
     print("     gpu id: %s" % args.gpu_id)
     print("     num workers: %i" % args.workers)
-    print("     hook: ", args.hook)
+    print("     hooker: ", args.hooker)
     print("     trace: ", args.trace)
     print("     --------------------------- model ----------------------------------")
     print("     Model: %s" % args.arch)
@@ -557,7 +567,7 @@ def main():
         # state dict is updated for this step: updated by the newly trained weights
         # model arch is not updated, it will update along with grow
         errs = None
-        if args.hook:
+        if args.hooker:
             errs = hooker.output(epoch)
             # errs = hooker.draw(epoch, archs=modelArch.arch)
 
@@ -581,7 +591,7 @@ def main():
                     # model.cuda()
                     model.to(device) # --
 
-                    model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
+                    model.load_state_dict(modelArch.state_dict.state_dict, strict=False) # True) # False due to buffer to calculate lipschitz
                     # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
                     # if cosine
                     optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
@@ -592,11 +602,11 @@ def main():
                     # if multi epoch cosine or cosine_restart
                     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
                     scheduler.update(optimizer, epoch=epoch)
-                    if args.hook:
+                    if args.hooker:
                         hooker.hook(model)
 
             elif args.mode == 'adapt':
-                assert args.hook
+                assert args.hooker
 
                 # propose candidate blocks by truncated errs of each residual block
                 trigger.feed(errs) 
@@ -620,11 +630,11 @@ def main():
                         # model.cuda()
                         model.to(device) # --
 
-                        model.load_state_dict(modelArch.state_dict.state_dict, strict=True)
+                        model.load_state_dict(modelArch.state_dict.state_dict, strict=False) # True) # False due to Lipschitz buffer
                         # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
                         # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
                         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-                        if args.hook:
+                        if args.hooker:
                             hooker.hook(model)
 
                         # update history shape in trigger
@@ -634,7 +644,7 @@ def main():
                 raise KeyError('Grow mode %s not supported!' % args.mode)
 
     scheduler.close()
-    if args.hook:
+    if args.hooker:
         hooker.close()
     timeLogger.close()
     # err_logger.close()
@@ -672,7 +682,7 @@ def main():
     # model.cuda()
     best_model.to(device) # --
 
-    best_model.load_state_dict(best_checkpoint['state_dict'])
+    best_model.load_state_dict(best_checkpoint['state_dict'], strict=False)
     test_loss, test_acc = test(testloader, best_model, criterion, -1, use_cuda, hooker=None)
     # test_loss, test_acc = test(valloader, best_model, criterion, -1, use_cuda)
     if args.grow:
@@ -789,7 +799,7 @@ def test(testloader, model, criterion, epoch, use_cuda, hooker=None):
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             # justin: 12-27
-            if hooker:
+            if hooker == 'Model':
                 hooker.collect()
 
         # measure accuracy and record loss

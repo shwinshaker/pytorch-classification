@@ -70,5 +70,6 @@ from .preresnet import *
 from .densenet import *
 
 from .transresnet import *
+from .midnet import *
 #
 from .accnet import *

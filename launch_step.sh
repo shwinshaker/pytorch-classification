@@ -7,18 +7,17 @@
 #!/bin/bash
 debug=0 # 100 # 
 
-model='resnet' # 'midnet' # "preresnet" # transresnet
+model='preresnet' # "preresnet" # transresnet
 dataset="cifar10" # cifar10
 depth=20 # 3*2 * num_blocks_per_layer + 2
 grow=true
-hooker='Lip'
 # grow start -------------------------
 mode='fixed' # 'adapt'
 maxdepth=74
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
-trace=('norm') #  'pc2')
+trace=('norm' 'pc2')
 # ------ adapt
 scale_down=True # scale the residual by activations
 err_atom='model' # 'layer'
@@ -26,23 +25,21 @@ thresh='0.0' #'1.1'
 backtrack=3
 window=7
 # ----- fixed
-# dupEpoch=(60 110)
+# dupEpoch=(60 130)
 # dupEpoch=(80 130)
 # dupEpoch=(10 20)
 # dupEpoch=(10 30)
-dupEpoch=(10 110)
-# dupEpoch=($2 $3)
-# dupEpoch=()
+dupEpoch=($2 $3)
 # dupEpoch=(70 110)
 # dupEpoch='even' #'warm'
 # grow end -------------------------
 
 # regular hypers -----------
 epochs=164 # 2 # 10
-scheduler='constant' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+scheduler='step' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
-schedule=() # test with the same schedule
+schedule=(60 110) # test with the same schedule
 # schedule=(10 30 70 110) # test with the same schedule
 # schedule=() # ($2 $3) # test with the same schedule
 # schedule=(20)
@@ -50,7 +47,7 @@ regularization='' # 'truncate_error'
 lr='0.1'
 gamma='0.1' # 0.1 # if scheduler == step or expo
 weight_decay='1e-4'
-r_gamma='1e-3' # truncate error regularization coefficient
+r_gamma='1e-3'
 train_batch='128'
 test_batch='100'
 
@@ -58,13 +55,13 @@ gpu_id=$1 # 4 # $3 #5
 # gpu_id='1,2' # 4 # $3 #5
 workers=4 # 32 # 4 * num gpus; or estimate by throughput
 log_file="train.out"
-suffix="nobn" # "2" # "no_bn" # "regularization" # -res" # pca"
-prefix="Batch-Lip"
+suffix="" # "no_bn" # "regularization" # -res" # pca"
+prefix="Batch"
 
 if (( debug > 0 )); then
     epochs=5
-    dupEpoch=(3 4) # ()
-    schedule=() # (2 4) # (3 4) # ()
+    dupEpoch=(1 4) # ()
+    schedule=(2 3) # (3 4) # ()
 fi
 
 if [ "$grow" = true ]; then
@@ -105,7 +102,7 @@ if [ ! -z "$regularization" ];then
 fi
 
 if [ ! -z "$suffix" ];then
-    dir=$dir'_'$suffix
+    dir=$dir-$suffix
 fi
 
 if [ ! -z "$prefix" ];then
@@ -146,20 +143,20 @@ cp -r models $checkpoint
 
 if [ "$grow" = true ]; then
     if (( debug > 0 )); then
-	python cifar.py -d $dataset -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --hooker $hooker --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" 2>&1 | tee "$checkpoint""/"$log_file
+	python cifar.py -d $dataset -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" 2>&1 | tee "$checkpoint""/"$log_file
     else
-	python cifar.py -d $dataset -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --hooker $hooker --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" > "$checkpoint""/"$log_file 2>&1 &
+	python cifar.py -d $dataset -a $model --grow --scale-stepsize $scale --scale $scale_down --depth $depth --mode $mode --grow-atom $grow_atom --err-atom $err_atom --grow-operation $operation --max-depth $maxdepth --epochs $epochs --grow-epoch "${dupEpoch[@]}" --threshold $thresh --backtrack $backtrack --window $window --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" > "$checkpoint""/"$log_file 2>&1 &
     fi
 else 
     if (( debug > 0 )); then
-	python cifar.py -d $dataset -a $model --scale $scale --depth $depth --epochs $epochs --hooker $hooker --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" | tee "$checkpoint""/"$log_file
+	python cifar.py -d $dataset -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" | tee "$checkpoint""/"$log_file
     else
-	python cifar.py -d $dataset -a $model --scale $scale --depth $depth --epochs $epochs --hooker $hooker --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" > "$checkpoint""/"$log_file 2>&1 &
+	python cifar.py -d $dataset -a $model --scale $scale --depth $depth --epochs $epochs --scheduler $scheduler --schedule "${schedule[@]}" --gamma $gamma --wd $weight_decay --regularization "$regularization" --r_gamma $r_gamma --lr $lr --train-batch $train_batch --test-batch $test_batch --checkpoint "$checkpoint" --gpu-id "$gpu_id" --workers $workers --debug-batch-size $debug --trace "${trace[@]}" > "$checkpoint""/"$log_file 2>&1 &
     fi
 fi
 pid=$!
 echo "[$pid] [$gpu_id] [Path]: $checkpoint"
 if (( debug == 0 )); then
-    echo "s [$pid] [$gpu_id] $(date) [Path]: $checkpoint" >> log.txt
+    echo "[$pid] [$gpu_id] $(date) [Path]: $checkpoint" >> log.txt
 fi
 

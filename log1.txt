@@ -1,0 +1,4 @@
+[28787] Thu Dec 26 00:04:07 PST 2019 [Path]: checkpoints/imagenet/Orig-resnet-18-step-31-61-lr=0-1-gamma=0-1-noscale [90]
+[60721] Thu Dec 26 12:23:32 PST 2019 [Path]: checkpoints/imagenet/Orig-resnet-26-adapt-98-model-th=0-0-model-duplicate-cosine-lr=0-5-noscale [33]
+[70485] Fri Dec 27 18:05:56 PST 2019 [Path]: checkpoints/cifar10/Orig-resnet-20-constant-lr=0-1-noscale-pca [30]
+[45802] Fri Dec 27 20:53:18 PST 2019 [Path]: checkpoints/imagenet/Orig-resnet-26-adapt-98-model-th=0-0-model-duplicate-acosine-lr=0-5-noscale [0]
