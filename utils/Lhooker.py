@@ -270,7 +270,7 @@ class LipHooker:
         self.node_logger.append([epoch] + _lips)
 
         # self.history.append([l.item() for l in lips])
-        return torch.max(lips)
+        return torch.mean(lips).item()
 
     def close(self):
         for hooker in self.hookers:

@@ -23,7 +23,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
-from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger
+from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger, MoveMinTrigger, MinTolTrigger
 from utils import LipHooker
 from utils import ModelArch
 from utils import str2bool, is_powerOfTwo
@@ -505,7 +505,10 @@ def main():
     if args.grow and args.mode == 'adapt':
         # trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
         # trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.grow_atom, err_atom=args.err_atom) # test
-        trigger = ConvergeTrigger(smooth='median', atom=args.grow_atom, err_atom=args.err_atom, window=args.window, backtrack=args.backtrack, thresh=args.threshold) # test
+        # trigger = MinTrigger(window=args.window, epochs=args.epochs) # test
+        trigger = MinTolTrigger(tolerance=args.threshold, reserve=args.window, epochs=args.epochs) # test
+        # trigger = ConvergeTrigger(smooth='median', atom=args.grow_atom, err_atom=args.err_atom, window=args.window, backtrack=args.backtrack, thresh=args.threshold) # test
+        # trigger = MoveMinTrigger(smooth='min', window=args.window, epochs=args.epochs) # test
 
     # evaluation mode
     if args.evaluate:
@@ -610,7 +613,8 @@ def main():
 
                 # propose candidate blocks by truncated errs of each residual block
                 trigger.feed(errs) 
-                err_indices = trigger.trigger(modelArch.get_num_blocks_all_layer()) 
+                # err_indices = trigger.trigger(modelArch.get_num_blocks_all_layer()) 
+                err_indices = trigger.trigger(epoch, modelArch.get_num_blocks_all_layer()) 
                 if err_indices:
                     # try duplicate it to see if any layer exceeds upper limit
                     err_indices = modelArch.grow(err_indices)
@@ -632,8 +636,8 @@ def main():
 
                         model.load_state_dict(modelArch.state_dict.state_dict, strict=False) # True) # False due to Lipschitz buffer
                         # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                        # optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
-                        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+                        optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                        # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
                         if args.hooker:
                             hooker.hook(model)
 
