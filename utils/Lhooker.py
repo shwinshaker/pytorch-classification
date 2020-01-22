@@ -44,8 +44,8 @@ class Hooker:
         """
         if class_name.startswith('Conv'):
             self.lip = self.__conv_lip
-        # elif class_name.startswith('BatchNorm'):
-        #     self.lip = self.__bn_lip
+        elif class_name.startswith('BatchNorm'):
+            self.lip = self.__bn_lip
         else:
             self.lip = lambda: torch.squeeze(torch.ones(1)) # Lipschitz constant 1 for any other nodes
 
@@ -104,7 +104,7 @@ class Hooker:
             v = self.__normalize(v)
             
         sigma = torch.norm(F.conv2d(v, weight, stride=stride, padding=padding, bias=None).view(-1))
-        print(self.name, sigma.item(), spec_norm(weight.cpu().numpy(), u.size()[2:]))
+        print('%s - specnorm_iter: %.4f - specnorm_svd: %.4f' % (self.name, sigma.item(), spec_norm(weight.cpu().numpy(), u.size()[2:])))
 
         # modify buffer - because tensor are copied for every operation, needs to modify the memory
         v_.copy_(v)
@@ -143,7 +143,7 @@ class Hooker:
         assert self.module.eps == 1e-5
         # this will return a python number, no need to do tensor.item() again
         lip = torch.max(torch.abs(weight) / torch.sqrt(var + self.module.eps))
-        print(self.name, lip.item(), torch.max(torch.abs(weight)).item(), torch.max(var).item())
+        print('%s - lip: %.4f - weight: %.4f - var: %.4f' % (self.name, lip.item(), torch.max(torch.abs(weight)).item(), torch.max(var).item()))
         return lip
 
     def __get_parameter(self, name):
@@ -176,8 +176,12 @@ class BlockHooker:
         # this is a major drawback if we don't register hooker when building the model
         # TODO: some log, temmporarily
         self._lips = [hooker.lip() for hooker in self.hookers]
+        self._lip = torch.prod(torch.tensor(self._lips))
+        self._lip_conv = torch.prod(torch.tensor([l for l, b in zip(self._lips, self.hookers) if 'conv' in b.name]))
+        self._lip_bn = torch.prod(torch.tensor([l for l, b in zip(self._lips, self.hookers) if 'bn' in b.name]))
         # return torch.prod(torch.tensor([hooker.lip() for hooker in self.hookers]))
-        return torch.prod(torch.tensor(self._lips))
+        # return torch.prod(torch.tensor(self._lips))
+        return self._lip
 
     def remove(self):
         for hooker in self.hookers:
@@ -224,8 +228,16 @@ class LipHooker:
         self.logger = Logger(os.path.join(dpath, 'Lipschitz.txt'))
         if not resume:
             self.logger.set_names(['epoch', 'max', 'min', 'median', 'mean', 'std', 'overhead(secs)'])
-        # self.history = []
 
+        self.logger_conv = Logger(os.path.join(dpath, 'Lipschitz_conv.txt'))
+        if not resume:
+            self.logger_conv.set_names(['epoch', 'max', 'min', 'median', 'mean', 'std', 'overhead(secs)'])
+
+        self.logger_bn = Logger(os.path.join(dpath, 'Lipschitz_bn.txt'))
+        if not resume:
+            self.logger_bn.set_names(['epoch', 'max', 'min', 'median', 'mean', 'std', 'overhead(secs)'])
+
+        # self.history = []
         self.node_logger = None
 
     def hook(self, model):
@@ -265,6 +277,14 @@ class LipHooker:
 
         self.logger.append([epoch, torch.max(lips), torch.min(lips), torch.median(lips), torch.mean(lips), torch.std(lips), elapse])
         
+        # test: block lip - conv only
+        _lip_conv = torch.tensor([blockHooker._lip_conv for layerHooker in self.hookers for blockHooker in layerHooker.hookers])
+        self.logger_conv.append([epoch, torch.max(_lip_conv), torch.min(_lip_conv), torch.median(_lip_conv), torch.mean(_lip_conv), torch.std(_lip_conv), elapse])
+
+        # test: block lip - batch norm only
+        _lip_bn = torch.tensor([blockHooker._lip_bn for layerHooker in self.hookers for blockHooker in layerHooker.hookers])
+        self.logger_bn.append([epoch, torch.max(_lip_bn), torch.min(_lip_bn), torch.median(_lip_bn), torch.mean(_lip_bn), torch.std(_lip_bn), elapse])
+
         # test: examine each node
         _lips = [_lip for layerHooker in self.hookers for blockHooker in layerHooker.hookers for _lip in blockHooker._lips]
         self.node_logger.append([epoch] + _lips)
@@ -276,6 +296,9 @@ class LipHooker:
         for hooker in self.hookers:
             hooker.remove()
         self.logger.close()
+        self.logger_conv.close()
+        self.logger_bn.close()
+
         if self.node_logger:
             self.node_logger.close()
 
