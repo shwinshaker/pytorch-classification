@@ -585,6 +585,7 @@ def main():
                 if epoch+1 in args.grow_epoch: # justin 12.14: changed `epoch` to `epoch+1`
                     modelArch.grow(1)
                     print('New archs: %s' % modelArch)
+                    print(modelArch.arch)
                     model = models.__dict__[args.arch](num_classes=num_classes,
                                                        block_name=args.block_name,
                                                        archs=modelArch.arch)
