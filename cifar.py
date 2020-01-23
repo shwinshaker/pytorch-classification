@@ -109,9 +109,10 @@ parser.add_argument('--mode', type=str, choices=['adapt', 'fixed'], default='ada
 parser.add_argument('--grow-atom', type=str, choices=['block', 'layer', 'model'], default='block', help='blockwise, layerwise or modelwise?')
 parser.add_argument('--err-atom', type=str, choices=['block', 'layer', 'model'], default='block', help='Measure errs in block, layer or model level?')
 parser.add_argument('--grow-operation', type=str, choices=['duplicate', 'plus'], default='duplicate', help='duplicate or plus?')
-parser.add_argument('--grow-epoch', type=str, nargs='+', default=['60', '110'], help='Duplicate the model at these epochs. Required if mode = fixed.')
+parser.add_argument('--grow-epoch', type=str, nargs='*', default=['60', '110'], help='Duplicate the model at these epochs. Required if mode = fixed.')
 parser.add_argument('--max-depth', type=int, default=74, help='Max model depth. Required if mode = adapt.')
 parser.add_argument('--window', type=int, default=3, help='Smooth scope of truncated err estimation. Required if mode = adapt.')
+parser.add_argument('--reserve', type=int, default=20, help='Reserved epochs for final model')
 parser.add_argument('--backtrack', type=int, default=30, help='History that base err tracked back to.  Required if mode = adapt.')
 parser.add_argument('--threshold', type=float, default=1.1, help='Err trigger threshold for growing.  Required if mode = adapt.')
 parser.add_argument('--scale', type=str2bool, const=True, default=True, nargs='?', help='Scale the residual by activations? Scale the acceleration by residuals?')
@@ -467,7 +468,8 @@ def main():
             print("     err atom: %s" % args.err_atom)
             print("     err threshold: %g" % args.threshold)
             print("     smoothing scope: %i" % args.window)
-            print("     err back track history: %i" % args.backtrack)
+            print("     reserved epochs: %i" % args.reserve)
+            print("     err back track history (deprecated): %i" % args.backtrack)
     if args.debug_batch_size:
         print("     -------------------------- debug ------------------------------------")
         print("     debug batches: %i" % args.debug_batch_size)
@@ -506,7 +508,7 @@ def main():
         # trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
         # trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.grow_atom, err_atom=args.err_atom) # test
         # trigger = MinTrigger(window=args.window, epochs=args.epochs) # test
-        trigger = MinTolTrigger(tolerance=args.threshold, reserve=args.window, epochs=args.epochs) # test
+        trigger = MinTolTrigger(tolerance=args.threshold, window=args.window, reserve=args.reserve, epochs=args.epochs) # test
         # trigger = ConvergeTrigger(smooth='median', atom=args.grow_atom, err_atom=args.err_atom, window=args.window, backtrack=args.backtrack, thresh=args.threshold) # test
         # trigger = MoveMinTrigger(smooth='min', window=args.window, epochs=args.epochs) # test
 

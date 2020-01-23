@@ -253,9 +253,10 @@ class MinTrigger:
 
 
 class MinTolTrigger:
-    def __init__(self, tolerance=1.1, reserve=10, epochs=164, smooth=statistics.mean):
+    def __init__(self, tolerance=1.1, window=1, reserve=20, epochs=164, smooth=statistics.mean):
 
         self.tolerance = tolerance 
+        self.window = window
         self.reserve = reserve
         self.epochs = epochs
         # self.min_err = float("inf")
@@ -269,8 +270,8 @@ class MinTolTrigger:
         assert(isinstance(err, float))
 
         self.history.append(err)
-        if len(self.history) >= self.reserve:
-            self.smooth_history.append(self.smooth(self.history[-self.reserve:]))
+        if len(self.history) >= self.window:
+            self.smooth_history.append(self.smooth(self.history[-self.window:]))
         # print('err: %.4f - min-err: %.4f - ratio: %.4f - buffer: %i' % (err, self.min_err, err/self.min_err, self.buffer))
 
         if self.smooth_history:
