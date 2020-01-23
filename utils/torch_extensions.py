@@ -141,6 +141,7 @@ class StateDict:
 
     def duplicate_model(self):
         self.duplicate_layers(range(self.num_layers))
+        self.halve_weight()
 
     def plus_layer(self, l):
         bs = self.get_block_indices_in_layer(l)
@@ -153,6 +154,13 @@ class StateDict:
 
     def plus_model(self):
         self.plus_layers(range(self.num_layers))
+
+    def halve_weight(self):
+        for key in self.state_dict:
+            if 'layer' in key and 'conv' in key:
+                if 'weight' in key or 'bias' in key:
+                    self.state_dict[key] /= 1.41421356237
+                
 
     # def grow(self, indices=None):
 
@@ -287,7 +295,7 @@ class ModelArch:
 
         if not self.max_depth:
             for l, b in li:
-                self.arch[l][b] /= 2
+                # self.arch[l][b] /= 2
                 self.arch[l][b] = [self.arch[l][b]] * 2
             self.arch = [reduce_list(layer) for layer in self.arch]
             return
@@ -306,7 +314,7 @@ class ModelArch:
                 skip_layers.add(l)
                 filtered_duplicate_blocks.remove((l, b))
                 continue
-            self.arch[l][b] /= 2
+            # self.arch[l][b] /= 2
             self.arch[l][b] = [self.arch[l][b]] * 2
             blocks_all_layers[l] += 1
 
