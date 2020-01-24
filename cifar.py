@@ -599,13 +599,17 @@ def main():
                     model.load_state_dict(modelArch.state_dict.state_dict, strict=False) # True) # False due to buffer to calculate lipschitz
                     # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
                     # if cosine
-                    optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                    if args.scheduler == 'cosine' and not args.schedule:
+                        # no restarts
+                        optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                    else:
+                        # default setting
+                        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
                     '''
                         not sure if have to copy the entire momentum history for each weight
                         here just initialize the optimizer again
                     '''
                     # if multi epoch cosine or cosine_restart
-                    # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
                     scheduler.update(optimizer, epoch=epoch)
                     if args.hooker:
                         hooker.hook(model)
@@ -637,9 +641,11 @@ def main():
                         model.to(device) # --
 
                         model.load_state_dict(modelArch.state_dict.state_dict, strict=False) # True) # False due to Lipschitz buffer
-                        # optimizer = optim.SGD(model.parameters(), lr=state['lr'], momentum=args.momentum, weight_decay=args.weight_decay)
-                        optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
-                        # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+                        if args.scheduler == 'cosine': #  and not args.schedule:
+                            # cosine for adapt, no schedule will be provided
+                            optimizer = optim.SGD(model.parameters(), lr=scheduler.lr_(), momentum=args.momentum, weight_decay=args.weight_decay)
+                        else:
+                            optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
                         if args.hooker:
                             hooker.hook(model)
 
