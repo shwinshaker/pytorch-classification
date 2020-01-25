@@ -157,12 +157,12 @@ class StateDict:
 
     def halve_weight(self):
         for key in self.state_dict:
-            # if 'layer' in key and ('conv' in key or 'bn2' in key):
-            # should include bn, because running var not going to change abruptly after grow
-            #   halve conv weights is enough
-            #   or may be try halve bn weights?
+            if 'layer' in key and ('conv' in key or 'bn2' in key):
+            # should include bn, running var cancel out the halve of the conv before it
+            #   at training, running var is not used, therefore it's true
+            #   only rescale the second bn
             # if 'layer' in key and 'conv' in key:
-            if 'layer' in key and 'bn' in key:
+            # if 'layer' in key and 'bn' in key:
                 if 'weight' in key or 'bias' in key:
                     self.state_dict[key] /= 1.41421356237
                 

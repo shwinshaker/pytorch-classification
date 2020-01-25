@@ -6,7 +6,7 @@ from . import reduce_list
 
 import statistics
 
-__all__ = ['Trigger', 'MinTrigger', 'ConvergeTrigger', 'MoveMinTrigger', 'MinTolTrigger']
+__all__ = ['Trigger', 'MinTrigger', 'ConvergeTrigger', 'MoveMinTrigger', 'MinTolTrigger', 'TolTrigger']
 
 class Trigger(object):
     def __init__(self, smooth='median', window=5, backtrack=10, thresh=1.1):
@@ -247,6 +247,63 @@ class MinTrigger:
     def update(self, err_index):
         self.min = float("inf")
         self.buffer = 0
+
+    def close(self):
+        pass
+
+
+class TolTrigger:
+    def __init__(self, tolerance=1.1, window=1, reserve=20, epochs=164, smooth=statistics.mean):
+
+        self.tolerance = tolerance 
+        self.window = window
+        self.reserve = reserve
+        self.epochs = epochs
+        self.smooth = smooth
+
+        self.init_err = None
+        
+        self.history = []
+        self.smooth_history = []
+
+    def feed(self, err):
+        assert(isinstance(err, float))
+
+        self.history.append(err)
+        if len(self.history) >= self.window:
+            self.smooth_history.append(self.smooth(self.history[-self.window:]))
+
+        if self.smooth_history:
+            if not self.init_err:
+                self.init_err = self.smooth_history[-1]
+                return
+
+            smooth_err = self.smooth_history[-1]
+            print('err: %.4f - smooth-err: %.4f - init-smooth-err: %.4f - ratio: %.4f' % (err, smooth_err, self.init_err, smooth_err/self.init_err))
+        else:
+            print('err: %.4f - len-history: %i' % (err, len(self.history)))
+    
+    def trigger(self, epoch, arch=None):
+
+        if not self.smooth_history:
+            return 0
+
+        ratio = self.smooth_history[-1] / self.init_err
+        if ratio > self.tolerance:
+            return 1
+
+        # ensures the final model will get at least 10 epochs of training, if allowed by architecture
+        if self.epochs - epoch == self.reserve + 1:
+            print('Forced grow!')
+            return 1
+
+        return 0
+
+    def update(self, err_index):
+        self.init_err = None
+
+        self.history = []
+        self.smooth_history = []
 
     def close(self):
         pass
