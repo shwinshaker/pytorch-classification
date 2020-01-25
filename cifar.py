@@ -23,7 +23,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
-from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger, MoveMinTrigger, MinTolTrigger
+from utils import ModelHooker, Trigger, MinTrigger, ConvergeTrigger, MoveMinTrigger, MinTolTrigger, TolTrigger
 from utils import LipHooker
 from utils import ModelArch
 from utils import str2bool, is_powerOfTwo
@@ -508,7 +508,8 @@ def main():
         # trigger = Trigger(window=args.window, backtrack=args.backtrack, thresh=args.threshold, smooth='median') # test
         # trigger = MinTrigger(thresh=args.threshold, smooth='median', atom=args.grow_atom, err_atom=args.err_atom) # test
         # trigger = MinTrigger(window=args.window, epochs=args.epochs) # test
-        trigger = MinTolTrigger(tolerance=args.threshold, window=args.window, reserve=args.reserve, epochs=args.epochs) # test
+        # trigger = MinTolTrigger(tolerance=args.threshold, window=args.window, reserve=args.reserve, epochs=args.epochs) # test
+        trigger = TolTrigger(tolerance=args.threshold, window=args.window, reserve=args.reserve, epochs=args.epochs) # test
         # trigger = ConvergeTrigger(smooth='median', atom=args.grow_atom, err_atom=args.err_atom, window=args.window, backtrack=args.backtrack, thresh=args.threshold) # test
         # trigger = MoveMinTrigger(smooth='min', window=args.window, epochs=args.epochs) # test
 
