@@ -7,15 +7,15 @@
 #!/bin/bash
 debug=0 # 100 # 
 
-model='preresnet' # 'midnet' # "preresnet" # transresnet
+model='resnet' # 'midnet' # "preresnet" # transresnet
 dataset="cifar10" # cifar10
-depth=$2 # 3*2 * num_blocks_per_layer + 2
-grow=false # true
+depth=14 # 3*2 * num_blocks_per_layer + 2
+grow=true
 hooker='Lip'
 
 # grow start -------------------------
-mode='adapt' # 'fixed' # 'adapt'
-maxdepth=74
+mode='adapt'
+maxdepth=50
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
@@ -23,31 +23,34 @@ trace=('norm') #  'pc2')
 # ------ adapt --------------
 scale_down=True # scale the residual by activations
 err_atom='model' # 'layer'
-thresh='1.1' # '0.0' #'1.1'
+thresh='1.5' # '0.0' #'1.1'
 backtrack=3
-reserve=20
-window=1 # 7 # only thing that works now
-trigger='MinTolSmoothMeanLip'
+reserve=30
+window=10 # 7 # only thing that works now
+# trigger='TolSmoothMaxLip'
+trigger='TolSmoothMeanLip'
 # ----- fixed ---------------
 # dupEpoch=(60 110)
 # dupEpoch=(80 130)
 # dupEpoch=(10 20)
 # dupEpoch=(10 30)
 # dupEpoch=(10 110)
-dupEpoch=($2 $3)
-# dupEpoch=()
+# dupEpoch=($2 $3)
+dupEpoch=()
 # dupEpoch=(70 110)
 # dupEpoch='even' #'warm'
 # grow end -------------------------
 
 # regular hypers -----------
 epochs=164 # 2 # 10
-scheduler='cosine' # 'cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+# cosine_restart for any grow doesn't require schedule
+scheduler='cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
-schedule=() # test with the same schedule
+# schedule=(60 110) # test with the same schedule
 # schedule=(10 30 70 110) # test with the same schedule
-# schedule=() # ($2 $3) # test with the same schedule
+schedule=() # ($2 $3) # test with the same schedule
+# schedule=($2 $3) # test with the same schedule
 # schedule=(20)
 regularization='' # 'truncate_error'
 lr='0.2'
@@ -61,13 +64,20 @@ gpu_id=$1 # 4 # $3 #5
 # gpu_id='1,2' # 4 # $3 #5
 workers=4 # 32 # 4 * num gpus; or estimate by throughput
 log_file="train.out"
-suffix="" # "2" # "no_bn" # "regularization" # -res" # pca"
+replica=$2
+suffix="implicit" # "2" # "no_bn" # "regularization" # -res" # pca"
 prefix="Batch-Lip"
+
+if [ ! -z "$replica" ];then
+    suffix="$suffix"_"$replica"
+fi
 
 if (( debug > 0 )); then
     epochs=5
-    dupEpoch=(3 4) # ()
-    schedule=() # (2 4) # (3 4) # ()
+    dupEpoch=(2 4) # ()
+    # dupEpoch=() # ()
+    schedule=(2 4) # (3 4) # ()
+    # schedule=(2 4) # (3 4) # ()
 fi
 
 if [ "$grow" = true ]; then
@@ -80,7 +90,7 @@ if [ "$grow" = true ]; then
     else
         # dir="resnet-$depth-"$mode-$maxdepth-"$grow_atom""wise-th=${thresh//'.'/'_'}-back=$backtrack-window=$window"
         # dir="$model-$depth-$mode-$maxdepth-$grow_atom-th=${thresh//'.'/'-'}-$err_atom-$operation-$scheduler"-"lr=${lr//'.'/'-'}"
-        dir="$model-$depth-$mode-$maxdepth-$operation-$scheduler"-"lr=${lr//'.'/'-'}-window=$window-reserve=$reserve-trigger=$trigger"
+        dir="$model-$depth-$mode-$maxdepth-$operation-$scheduler"-"lr=${lr//'.'/'-'}-window=$window-reserve=$reserve-thresh=${thresh//'.'/'-'}-trigger=$trigger"
     fi
 else
     if [ "$scheduler" = 'constant' ]; then
