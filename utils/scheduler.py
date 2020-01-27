@@ -123,12 +123,48 @@ def cosine(**kwargs):
     return MultiStepCosineLR(**kwargs)
 
 
-class AdaptMultiStepCosineLR(MultiStepCosineLR):
+# class AdaptMultiStepCosineLR(MultiStepCosineLR):
+class AdaptMultiStepCosineLR(CosineAnnealingLR):
+
+    def __init__(self, optimizer, milestones, epochs, eta_min=0.001, dpath='.'):
+
+        self.milestones = sorted(milestones)
+        self.eta_min = eta_min
+        self.T = 0
+        self.next_T = epochs
+        super(AdaptMultiStepCosineLR, self).__init__(optimizer, self.next_T - self.T, eta_min)
+
+        self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
+        self.logger.set_names(['epoch', 'learning_rate'])
+
+    def step_(self, epoch, err):
+        print(epoch, self.last_epoch, self.T_max, self.T, self.next_T)
+
+        lrs = self.get_lr()
+        assert(len(set(lrs)) == 1), 'unexpected number of unique lrs!'
+        self.logger.append([epoch, lrs[0]])
+
+        if self.milestones and epoch == self.milestones[0] - 1:
+            self.last_epoch = -1 # because step will increment last_epoch 
+            self.milestones.pop(0)
+            self.T_max = self.next_T - epoch - 1
+
+        self.step()
+
+    def lr_(self):
+        lrs = [param_group['lr'] for param_group in self.optimizer.param_groups]
+        assert(len(set(lrs)) == 1)
+        assert(lrs[0] == self.get_lr()[0]), (lrs[0], self.get_lr()[0], self.last_epoch)
+        return self.get_lr()[0]
 
     def update(self, optimizer, epoch=None):
+        # update will only be called in grow case
         self.optimizer = optimizer
         self.last_epoch = 0
         self.T_max = self.next_T - epoch - 1
+
+    def close(self):
+        self.logger.close()
 
 def cosine_restart(**kwargs):
     return AdaptMultiStepCosineLR(**kwargs)
