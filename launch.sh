@@ -9,13 +9,13 @@ debug=0 # 100 #
 
 model='resnet' # 'midnet' # "preresnet" # transresnet
 dataset="cifar10" # cifar10
-depth=14 # 3*2 * num_blocks_per_layer + 2
+depth=20 # 3*2 * num_blocks_per_layer + 2
 grow=true
 hooker='Lip'
 
 # grow start -------------------------
-mode='adapt'
-maxdepth=50
+mode='fixed' # 'adapt'
+maxdepth=74 # 50
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
@@ -23,7 +23,7 @@ trace=('norm') #  'pc2')
 # ------ adapt --------------
 scale_down=True # scale the residual by activations
 err_atom='model' # 'layer'
-thresh='1.5' # '0.0' #'1.1'
+thresh='1.4' # '0.0' #'1.1'
 backtrack=3
 reserve=30
 window=10 # 7 # only thing that works now
@@ -35,8 +35,8 @@ trigger='TolSmoothMeanLip'
 # dupEpoch=(10 20)
 # dupEpoch=(10 30)
 # dupEpoch=(10 110)
-# dupEpoch=($2 $3)
-dupEpoch=()
+dupEpoch=($2 $3)
+# dupEpoch=()
 # dupEpoch=(70 110)
 # dupEpoch='even' #'warm'
 # grow end -------------------------
@@ -47,13 +47,13 @@ epochs=164 # 2 # 10
 scheduler='cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
-# schedule=(60 110) # test with the same schedule
+schedule=() # test with the same schedule
 # schedule=(10 30 70 110) # test with the same schedule
-schedule=() # ($2 $3) # test with the same schedule
+# schedule=() # ($2 $3) # test with the same schedule
 # schedule=($2 $3) # test with the same schedule
 # schedule=(20)
 regularization='' # 'truncate_error'
-lr='0.2'
+lr='0.5'
 gamma='0.1' # 0.1 # if scheduler == step or expo
 weight_decay='1e-4'
 r_gamma='1e-3' # truncate error regularization coefficient
