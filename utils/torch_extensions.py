@@ -219,7 +219,7 @@ class ModelArch:
         arch: stepsize in each block in each layer
     '''
 
-    def __init__(self, model_name, model, depth, max_depth=None, dpath=None,
+    def __init__(self, model_name, model, epochs, depth, max_depth=None, dpath=None,
                  operation='duplicate', atom='block', dataset=None):
 
         assert 'resnet' in model_name.lower(), 'model_name is fixed to resnet'
@@ -244,7 +244,7 @@ class ModelArch:
 
         self.blocks_per_layer = (depth - 2) // (self.num_layers * 2)
         self.arch = [[1.0 for _ in range(self.blocks_per_layer)] for _ in range(self.num_layers)]
-        self.arch_history = [self.arch]
+        # self.arch_history = [self.arch]
         self.best_arch = None
         self.max_depth = max_depth
         self.max_blocks_per_layer = (max_depth - 2) // (self.num_layers * 2)
@@ -266,6 +266,11 @@ class ModelArch:
         self.logger = Logger(os.path.join(dpath, 'arch.txt'))
         self.logger.set_names(['epoch', *['layer%i-#blocks' % l for l in range(self.num_layers)], '# parameters'])
 
+        # model parameters and grow epoch logger
+        self.epochs = epochs
+        self.grow_epochs = []
+        self.num_parameters = []
+        self.record(-1, model) # dummy -1
 
     def duplicate_block(self, l, b):
         '''
@@ -278,7 +283,7 @@ class ModelArch:
         '''
 
         # half the stepsize at l-b
-        self.arch[l][b] /= 2
+        # self.arch[l][b] /= 2
 
         # duplicate the block, and insert
         self.arch[l].insert(b, self.arch[l][b])
@@ -364,7 +369,7 @@ class ModelArch:
             return 1
         return None
 
-    def grow(self, indices):
+    def grow(self, indices, epoch=None):
 
         if self.atom == 'block':
             assert isinstance(indices, list), 'list of indices of tuples required'
@@ -411,13 +416,29 @@ class ModelArch:
 
         return None
 
+    def record(self, epoch, model):
+        assert len(self.grow_epochs) == len(self.num_parameters)
+
+        # record grow epochs and num params
+        self.num_parameters.append(sum(p.numel() for p in model.parameters())/1000000.0)
+        self.grow_epochs.append(epoch + 1) # + 1 to be consistent with fixed
+
+    def _get_approx_time(self):
+        assert len(self.grow_epochs) == len(self.num_parameters)
+
+        self.grow_epochs.append(self.epochs)
+        times = [e2 - e1 for e1, e2 in zip(self.grow_epochs[:-1], self.grow_epochs[1:])]
+        assert all([t > 0 for t in times])
+        assert sum(times) == self.epochs
+        return sum([t * np for t, np in zip(times, self.num_parameters)])
+
     def update(self, epoch, is_best, model):
         if is_best:
             self.best_arch = deepcopy(self.arch)
 
         num_paras = sum(p.numel() for p in model.parameters())
         self.logger.append([epoch, *self.get_num_blocks_all_layer(), num_paras])
-        self.arch_history.append(self.arch)
+        # self.arch_history.append(self.arch)
 
         print('    Total params: %.2fM' % (num_paras/1000000.0))
 
@@ -431,8 +452,8 @@ class ModelArch:
 
     def close(self):
         self.logger.close()
-        with open(os.path.join(self.dpath, 'stepsize_history.pkl'), 'wb') as f:
-            pickle.dump(self.arch_history, f)
+        # with open(os.path.join(self.dpath, 'stepsize_history.pkl'), 'wb') as f:
+        #     pickle.dump(self.arch_history, f)
 
     def _get_indices_from_layers(self, ls):
         indices = []
