@@ -498,7 +498,7 @@ def main():
     # ---------- grow -----------
     # model architecture tracker
     if args.grow:
-        modelArch = ModelArch(args.arch, model, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom, dataset=args.dataset)
+        modelArch = ModelArch(args.arch, model, args.epochs, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom, dataset=args.dataset)
     # timer
     timeLogger = Logger(os.path.join(args.checkpoint, 'timer.txt'), title=title)
     timeLogger.set_names(['epoch', 'training-time(min)'])
@@ -614,6 +614,7 @@ def main():
                     scheduler.update(optimizer, epoch=epoch)
                     if args.hooker:
                         hooker.hook(model)
+                    modelArch.record(epoch, model)
 
             elif args.mode == 'adapt':
                 assert args.hooker
@@ -653,6 +654,7 @@ def main():
                         # update history shape in trigger
                         trigger.update(err_indices)
                         scheduler.update(optimizer, epoch=epoch)
+                        modelArch.record(epoch, model)
             else:
                 raise KeyError('Grow mode %s not supported!' % args.mode)
 
@@ -669,14 +671,13 @@ def main():
     # logger.plot()
     # savefig(os.path.join(args.checkpoint, 'log.eps'))
 
-    print('\nBest val acc: %.4f at %i' % (best_val_acc, best_epoch)) # this is the validation acc
-
-    test_loss, test_acc = test(testloader, model, criterion, -1, use_cuda, hooker=None)
-    # test_loss, test_acc = test(valloader, model, criterion, -1, use_cuda)
     if args.grow:
-        print('Final arch: %s' % modelArch)
-    print('Final Test Loss:  %.4f, Final Test Acc:  %.4f' % (test_loss, test_acc))
+        print('\nGrow epochs: ', modelArch.grow_epochs[1:], end=', ')
+        print('Num parameters: ', modelArch.num_parameters, end=', ')
+        print('Approx time: %.2f' % modelArch._get_approx_time())
 
+    # best model
+    print('Best val acc: %.4f at %i' % (best_val_acc, best_epoch)) # this is the validation acc
     best_checkpoint = torch.load(os.path.join(args.checkpoint, 'model_best.pth.tar'))
     if args.grow:
         best_model = models.__dict__[args.arch](num_classes=num_classes,
@@ -694,13 +695,19 @@ def main():
         best_model = torch.nn.DataParallel(best_model) # .cuda()
     # model.cuda()
     best_model.to(device) # --
-
     best_model.load_state_dict(best_checkpoint['state_dict'], strict=False)
+
     test_loss, test_acc = test(testloader, best_model, criterion, -1, use_cuda, hooker=None)
-    # test_loss, test_acc = test(valloader, best_model, criterion, -1, use_cuda)
     if args.grow:
-        print('Best arch: %s' % modelArch.__str__(best=True))
+        print('Best arch: %s' % modelArch.__str__(best=True), end=', ')
     print('Best Test Loss:  %.4f, Best Test Acc:  %.4f' % (test_loss, test_acc))
+
+    # final model
+    test_loss, test_acc = test(testloader, model, criterion, -1, use_cuda, hooker=None)
+    if args.grow:
+        print('Final arch: %s' % modelArch, end=', ')
+    print('Final Test Loss:  %.4f, Final Test Acc:  %.4f' % (test_loss, test_acc))
+
     print('Wall time: %.3f mins' % ((time.time() - time_start)/60))
 
 
