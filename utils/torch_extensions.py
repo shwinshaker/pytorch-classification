@@ -231,9 +231,9 @@ class ModelArch:
             special_first = False
 
         # cifar: 3 layers # imagenet: 4 layers
-        if dataset.startswith('cifar'):
+        if 'cifar' in dataset.lower():
             self.num_layers = 3
-        elif dataset.startswith('imagenet'):
+        elif 'imagenet' in dataset.lower():
             self.num_layers = 4
         else:
             raise KeyError(dataset)

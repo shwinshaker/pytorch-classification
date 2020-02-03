@@ -8,14 +8,14 @@
 debug=0 # 100 # 
 
 model='resnet' # 'midnet' # "preresnet" # transresnet
-dataset="cifar10" # cifar10
-depth=14 # 3*2 * num_blocks_per_layer + 2
+dataset="cifar100" # cifar10
+depth=20 # 14 # 3*2 * num_blocks_per_layer + 2
 grow=true
 hooker='Lip'
 
 # grow start -------------------------
 mode='adapt'
-maxdepth=50
+maxdepth=74
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
@@ -23,20 +23,24 @@ trace=('norm') #  'pc2')
 # ------ adapt --------------
 scale_down=True # scale the residual by activations
 err_atom='model' # 'layer'
-thresh='1.5' # '0.0' #'1.1'
+thresh='1.4' # '0.0' #'1.1'
 backtrack=3
 reserve=30
 window=10 # 7 # only thing that works now
 # trigger='TolSmoothMaxLip'
 trigger='TolSmoothMeanLip'
 # ----- fixed ---------------
-# dupEpoch=(60 110)
+if [ "$grow" = true ] && [ "$mode" = 'fixed' ]; then
+    dupEpoch=(60 110)
+else
+    dupEpoch=()
+fi
 # dupEpoch=(80 130)
 # dupEpoch=(10 20)
 # dupEpoch=(10 30)
 # dupEpoch=(10 110)
 # dupEpoch=($2 $3)
-dupEpoch=()
+# dupEpoch=()
 # dupEpoch=(70 110)
 # dupEpoch='even' #'warm'
 # grow end -------------------------
@@ -47,13 +51,17 @@ epochs=164 # 2 # 10
 scheduler='cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
-# schedule=(60 110) # test with the same schedule
+if [ "$grow" = false ]; then
+    schedule=(60 110) # test with the same schedule
+    # schedule=() 
+else
+    schedule=() # ($2 $3) # test with the same schedule
+fi
 # schedule=(10 30 70 110) # test with the same schedule
-schedule=() # ($2 $3) # test with the same schedule
 # schedule=($2 $3) # test with the same schedule
 # schedule=(20)
 regularization='' # 'truncate_error'
-lr='0.2'
+lr='0.5' # '0.2'
 gamma='0.1' # 0.1 # if scheduler == step or expo
 weight_decay='1e-4'
 r_gamma='1e-3' # truncate error regularization coefficient
@@ -65,19 +73,31 @@ gpu_id=$1 # 4 # $3 #5
 workers=4 # 32 # 4 * num gpus; or estimate by throughput
 log_file="train.out"
 replica=$2
-suffix="implicit" # "2" # "no_bn" # "regularization" # -res" # pca"
+if [ "$grow" = true ];then
+    suffix="implicit" # "2" # "no_bn" # "regularization" # -res" # pca"
+else
+    suffix=""
+fi
 prefix="Batch-Lip"
 
 if [ ! -z "$replica" ];then
-    suffix="$suffix"_"$replica"
+    if [ ! -z "$suffix" ];then
+	suffix="$suffix"_"$replica"
+    else
+	suffix="$replica"
+    fi
 fi
 
 if (( debug > 0 )); then
-    epochs=5
-    dupEpoch=(2 4) # ()
-    # dupEpoch=() # ()
-    schedule=(2 4) # (3 4) # ()
+    epochs=10
+    # dupEpoch=(2 4) # ()
+    dupEpoch=($2 $3) # ()
     # schedule=(2 4) # (3 4) # ()
+    schedule=() # (3 4) # ()
+    thresh='1.0' # '0.0' #'1.1'
+    backtrack=1
+    reserve=1
+    window=1
 fi
 
 if [ "$grow" = true ]; then
