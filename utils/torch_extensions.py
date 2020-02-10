@@ -157,14 +157,19 @@ class StateDict:
 
     def halve_weight(self):
         for key in self.state_dict:
-            if 'layer' in key and ('conv' in key or 'bn2' in key):
+            if 'layer' in key and ('conv' in key or 'bn2' in key): # if preresnet
+                print('preresnet preclaimed!')
+                if 'weight' in key or 'bias' in key:
+                    self.state_dict[key] /= 1.41421356237
+            # if 'layer' in key and ('conv' in key or 'bn' in key): # if resnet
+            #     print('resnet preclaimed!')
+            #     if 'weight' in key or 'bias' in key:
+            #         self.state_dict[key] /= 2 # 1.41421356237
             # should include bn, running var cancel out the halve of the conv before it
             #   at training, running var is not used, therefore it's true
             #   only rescale the second bn
             # if 'layer' in key and 'conv' in key:
             # if 'layer' in key and 'bn' in key:
-                if 'weight' in key or 'bias' in key:
-                    self.state_dict[key] /= 1.41421356237
                 
 
     # def grow(self, indices=None):
