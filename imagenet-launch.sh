@@ -9,12 +9,12 @@ debug=0 # 100 #
 
 model='resnet' # 'midnet' # "preresnet" # transresnet
 dataset="tiny-imagenet" # "cifar100" # cifar10
-depth=18 # 66 # 18 # 20 # 14 # 3*2 * num_blocks_per_layer + 2
-grow=true
+depth=66 # 18 # 20 # 14 # 3*2 * num_blocks_per_layer + 2
+grow=false # true
 hooker='Lip'
 
 # grow start -------------------------
-mode='adapt'
+mode='fixed' # 'adapt'
 maxdepth=66 # 74
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work

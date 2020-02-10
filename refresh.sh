@@ -10,7 +10,7 @@
 # clear=false
 
 log_file=$1
-[[ -z $log_file ]] && log_file='log.txt'
+[[ -z $log_file ]] && log_file='log_metric.txt'
 
 while getopts "h?c" opt; do
     case "$opt" in

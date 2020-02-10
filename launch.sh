@@ -9,13 +9,13 @@ debug=0 # 100 #
 
 model='resnet' # 'midnet' # "preresnet" # transresnet
 dataset="cifar100" # cifar10
-depth=20 # 14 # 3*2 * num_blocks_per_layer + 2
-grow=true
+depth=14 # 3*2 * num_blocks_per_layer + 2
+grow=false # true
 hooker='Lip'
 
 # grow start -------------------------
-mode='adapt'
-maxdepth=74
+mode='fixed' # 'adapt'
+maxdepth=50
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
@@ -31,7 +31,11 @@ window=10 # 7 # only thing that works now
 trigger='TolSmoothMeanLip'
 # ----- fixed ---------------
 if [ "$grow" = true ] && [ "$mode" = 'fixed' ]; then
+    # dupEpoch=(96 134)
     dupEpoch=(60 110)
+    # dupEpoch=(39 130)
+    # dupEpoch=($2 $3)
+    # dupEpoch=($2)
 else
     dupEpoch=()
 fi
@@ -74,9 +78,10 @@ workers=4 # 32 # 4 * num gpus; or estimate by throughput
 log_file="train.out"
 replica=$2
 if [ "$grow" = true ];then
-    suffix="implicit" # "2" # "no_bn" # "regularization" # -res" # pca"
+    suffix="implicit" # this seems better, though not right in theory
+    # suffix="implicit_rr" # "2" # "no_bn" # "regularization" # -res" # pca"
 else
-    suffix=""
+    suffix="" # "overhead"
 fi
 prefix="Batch-Lip"
 
@@ -194,6 +199,6 @@ fi
 pid=$!
 echo "[$pid] [$gpu_id] [Path]: $checkpoint"
 if (( debug == 0 )); then
-    echo "s [$pid] [$gpu_id] $(date) [Path]: $checkpoint" >> log.txt
+    echo "s [$pid] [$gpu_id] $(date) [Path]: $checkpoint" >> log_metric.txt
 fi
 

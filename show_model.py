@@ -9,7 +9,8 @@ import numpy as np
 
 # net = midnet(num_classes=10, depth=20)
 net = resnet(num_classes=10, depth=20)
-# print(net.__class__.__name__)
+print(net)
+print(net.__class__.__name__)
 # print(dict(dict(net.layer1.named_children())['0'].bn1.named_buffers())['running_var'].detach())
 # print(dict(dict(net.layer1.named_children())['0'].bn1.named_parameters())['weight'].detach())
 kernel = dict(dict(net.layer1.named_children())['0'].conv1.named_parameters())['weight'].cpu().detach().numpy()
