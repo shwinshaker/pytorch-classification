@@ -11,6 +11,7 @@ from . import Logger
 __all__ = ['LipHooker']
 
 def spec_norm(weight, input_dim):
+    # exact solution by svd and fft
     import numpy as np
     assert len(input_dim) == 2
     assert len(weight.shape) == 4
@@ -104,7 +105,9 @@ class Hooker:
             v = self.__normalize(v)
             
         sigma = torch.norm(F.conv2d(v, weight, stride=stride, padding=padding, bias=None).view(-1))
-        print('%s - specnorm_iter: %.4f - specnorm_svd: %.4f' % (self.name, sigma.item(), spec_norm(weight.cpu().numpy(), u.size()[2:])))
+        print('%s - specnorm_iter: %.4f' % (self.name, sigma.item()))
+        # comparison with exact solution
+        # print('%s - specnorm_iter: %.4f - specnorm_svd: %.4f' % (self.name, sigma.item(), spec_norm(weight.cpu().numpy(), u.size()[2:])))
 
         # modify buffer - because tensor are copied for every operation, needs to modify the memory
         v_.copy_(v)

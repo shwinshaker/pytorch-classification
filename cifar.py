@@ -543,7 +543,7 @@ def main():
         modelArch = ModelArch(args.arch, model, args.epochs, args.depth, max_depth=args.max_depth, dpath=args.checkpoint, operation=args.grow_operation, atom=args.grow_atom, dataset=args.dataset)
     # timer
     timeLogger = Logger(os.path.join(args.checkpoint, 'timer.txt'), title=title)
-    timeLogger.set_names(['epoch', 'training-time(min)'])
+    timeLogger.set_names(['epoch', 'training-time(min)', 'end-time(min)'])
 
     # trigger
     if args.grow and args.mode == 'adapt':
@@ -563,6 +563,8 @@ def main():
         return
 
     # Train and val
+    epoch_start = time.time()
+
     for epoch in range(start_epoch, args.epochs):
         # adjust_learning_rate(optimizer, args.)
 
@@ -574,7 +576,7 @@ def main():
         else:
             train_loss, regular_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda,
                                                         regularizer=regularizer)
-        timeLogger.append([epoch, (time.time() - end)/60])
+        train_end = time.time()
 
         # errs = hooker.output(epoch, archs=modelArch.arch, atom=args.err_atom, scale=args.scale)
         val_loss, val_acc = test(valloader, model, criterion, epoch, use_cuda, hooker)
@@ -699,6 +701,8 @@ def main():
                         modelArch.record(epoch, model)
             else:
                 raise KeyError('Grow mode %s not supported!' % args.mode)
+
+        timeLogger.append([epoch, (train_end - end)/60, (time.time() - epoch_start)/60])
 
     scheduler.close()
     if args.hooker:
