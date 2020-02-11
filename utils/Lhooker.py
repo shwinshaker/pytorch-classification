@@ -163,14 +163,15 @@ class Hooker:
 class BlockHooker:
     # named_children -> immediate children
 
-    def __init__(self, name, block, device=None):
+    def __init__(self, name, block, device=None, n_power_iterations=1):
         assert block.__class__.__name__ in ['BasicBlock', 'Bottleneck'], block.__class__.__name__
         self.name = name
         self.device = device
 
         self.hookers = []
         for name, node in block.named_children():
-            hooker = Hooker('.'.join([self.name, name]), node, device=device)
+            hooker = Hooker('.'.join([self.name, name]), node, device=device,
+                            n_power_iterations=n_power_iterations)
             # print(name)
             self.hookers.append(hooker)
 
@@ -189,6 +190,12 @@ class BlockHooker:
     def remove(self):
         for hooker in self.hookers:
             hooker.unhook()
+
+    def __len__(self):
+        return len(self.hookers)
+
+    def __iter__(self):
+        return iter(self.hookers)
 
 
 class LayerHooker:

@@ -166,7 +166,7 @@ class AdaptMultiStepCosineLR(CosineAnnealingLR):
     def close(self):
         self.logger.close()
 
-def cosine_restart(**kwargs):
+def adacosine(**kwargs):
     return AdaptMultiStepCosineLR(**kwargs)
 
 

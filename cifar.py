@@ -63,7 +63,7 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
 parser.add_argument('--drop', '--dropout', default=0, type=float,
                     metavar='Dropout', help='Dropout ratio')
 parser.add_argument('--scheduler', type=str, default='constant', choices=scheduler_names,
-                    help='scheduler type: none, step, cosine, or expo, adapt, acosine, cosine_restart')
+                    help='scheduler type: none, step, cosine, or expo, adapt, acosine, adacosine') # cosinerestart')
 parser.add_argument('--schedule', type=int, nargs='*', default=[81, 122],
                     help='Decrease learning rate at these epochs. Required if scheduler if true')
 parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
@@ -443,7 +443,7 @@ def main():
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, dpath=args.checkpoint)
     elif args.scheduler.startswith('step'):
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, milestones=args.schedule, gamma=args.gamma, dpath=args.checkpoint)
-    elif args.scheduler.startswith('cosine'):
+    elif args.scheduler.startswith('cosine') or args.scheduler == 'adacosine':
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, milestones=args.schedule, epochs=args.epochs, dpath=args.checkpoint)
     elif args.scheduler.startswith('expo'):
         scheduler = schedulers.__dict__[args.scheduler](optimizer=optimizer, gamma=args.gamma, dpath=args.checkpoint)
@@ -478,7 +478,7 @@ def main():
     print("     Momentum: %g" % args.momentum)
     print("     Weight decay: %g" % args.weight_decay)
     print("     Learning rate scheduler: %s" % args.scheduler)  # 'multi-step cosine annealing schedule'
-    if args.scheduler in ['step', 'cosine', 'cosine_restart']:
+    if args.scheduler in ['step', 'cosine', 'adacosine']:
         print("     Learning rate schedule - milestones: ", args.schedule)
     if args.scheduler in ['step', 'expo', 'adapt']:
         print("     Learning rate decay factor: %g" % args.gamma)
