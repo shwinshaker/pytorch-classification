@@ -155,16 +155,23 @@ class StateDict:
     def plus_model(self):
         self.plus_layers(range(self.num_layers))
 
-    def scale_weight(self, alpha=1.41421356237):
+    def scale_weight(self, alpha=1): # 1): # 1.41421356237):
         for key in self.state_dict:
-            if 'layer' in key and ('conv' in key or 'bn' in key): # if preresnet
+            # new scaling test for preresnet
+            # if 'layer' in key and ('conv' in key or 'bn' in key): # if preresnet
+            #     print('preresnet preclaimed!')
+            #     # bn - relu - conv - bn - relu - conv
+            #     if 'weight' in key or 'bias' in key:
+            #         self.state_dict[key] /= alpha
+            #         # self.state_dict[key] /= 1.189207115003
+            #     if 'running_var' in key:
+            #         self.state_dict[key] /= alpha**2
+
+            if 'layer' in key and ('conv' in key or 'bn2' in key): # if preresnet
                 print('preresnet preclaimed!')
-                # bn - relu - conv - bn - relu - conv
                 if 'weight' in key or 'bias' in key:
-                    self.state_dict[key] /= alpha
-                    # self.state_dict[key] /= 1.189207115003
-                if 'running_var' in key:
-                    self.state_dict[key] /= alpha**2
+                    self.state_dict[key] /= 1.41421356237
+
             # if 'layer' in key and ('conv' in key or 'bn' in key): # if resnet
             #     print('resnet preclaimed!')
             #     if 'weight' in key or 'bias' in key:
