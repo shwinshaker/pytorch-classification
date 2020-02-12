@@ -7,15 +7,15 @@
 #!/bin/bash
 debug=0 # 100 # 
 
-model='resnet' # 'midnet' # "preresnet" # transresnet
-dataset="cifar100" # cifar10
-depth=14 # 3*2 * num_blocks_per_layer + 2
-grow=false # true
+model='preresnet' # 'midnet' # "preresnet" # transresnet
+dataset="cifar10" # cifar10
+depth=20 # 3*2 * num_blocks_per_layer + 2
+grow=true
 hooker='Lip'
 
 # grow start -------------------------
 mode='fixed' # 'adapt'
-maxdepth=50
+maxdepth=74 # 50
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
@@ -32,9 +32,9 @@ trigger='TolSmoothMeanLip'
 # ----- fixed ---------------
 if [ "$grow" = true ] && [ "$mode" = 'fixed' ]; then
     # dupEpoch=(96 134)
-    dupEpoch=(60 110)
+    # dupEpoch=(60 110)
     # dupEpoch=(39 130)
-    # dupEpoch=($2 $3)
+    dupEpoch=($2 $3)
     # dupEpoch=($2)
 else
     dupEpoch=()
@@ -52,7 +52,7 @@ fi
 # regular hypers -----------
 epochs=164 # 2 # 10
 # cosine_restart for any grow doesn't require schedule
-scheduler='cosine_restart' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+scheduler='adacosine' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
 if [ "$grow" = false ]; then
@@ -65,7 +65,7 @@ fi
 # schedule=($2 $3) # test with the same schedule
 # schedule=(20)
 regularization='' # 'truncate_error'
-lr='0.5' # '0.2'
+lr='0.2' # '0.2'
 gamma='0.1' # 0.1 # if scheduler == step or expo
 weight_decay='1e-4'
 r_gamma='1e-3' # truncate error regularization coefficient
@@ -76,9 +76,9 @@ gpu_id=$1 # 4 # $3 #5
 # gpu_id='1,2' # 4 # $3 #5
 workers=4 # 32 # 4 * num gpus; or estimate by throughput
 log_file="train.out"
-replica=$2
+replica="" # $2
 if [ "$grow" = true ];then
-    suffix="implicit" # this seems better, though not right in theory
+    suffix="implicit_running_var" # this seems better, though not right in theory
     # suffix="implicit_rr" # "2" # "no_bn" # "regularization" # -res" # pca"
 else
     suffix="" # "overhead"
@@ -127,7 +127,7 @@ fi
 
 ### -------------------------------------------- caution!
 
-if [ ! "$scheduler" = constant ] && [ ! "$scheduler" = cosine ] && [ ! "$scheduler" = acosine ] && [ ! "$scheduler" = cosine_restart ] ;then
+if [ ! "$scheduler" = constant ] && [ ! "$scheduler" = cosine ] && [ ! "$scheduler" = acosine ] && [ ! "$scheduler" = cosine_restart ] && [ ! "$scheduler" = 'adacosine' ] ;then
     dir="$dir-gamma=${gamma//'.'/'-'}"
 fi
 

@@ -3,6 +3,7 @@
 import torch.nn as nn
 import torch
 import numpy as np
+from utils.Lhooker import BlockHooker
 
 def conv3x3(in_planes, out_planes, stride=1):
     "3x3 convolution with padding"
@@ -35,16 +36,14 @@ class BasicBlock(nn.Module):
         # residual = self.relu(residual)
         # residual = self.conv1(residual)
 
-        # residual = self.bn2(residual)
-        # residual = self.relu(residual)
         # residual = self.conv2(residual)
 
         # resnet - scaled by 1/2, but technically not right, since the last relu is applied as $relu(out + residual)$, rather than $out + relu(residual)$
-        # residual = self.conv1(residual)
-        residual = self.bn1(residual)
+        residual = self.conv1(residual)
+        # residual = self.bn1(residual)
         # residual = self.relu(residual)
 
-        # residual = self.conv2(residual)
+        residual = self.conv2(residual)
         # residual = self.bn2(residual)
         # residual = self.relu(residual)
 
@@ -61,6 +60,11 @@ class BasicBlock(nn.Module):
 
 torch.manual_seed(0)
 block = BasicBlock(8, 8)
+hooker = BlockHooker('test', block)
+
+batchsize = 100
+x = torch.randn(batchsize, 8, 32, 32)
+y = torch.randn(batchsize, 8, 32, 32)
 # print(block.state_dict().keys())
 
 # torch.manual_seed(0)
@@ -87,15 +91,26 @@ block = BasicBlock(8, 8)
 # # print(torch.norm(x1/2))
 
 # bn Lipschitz test
-print(block.state_dict()['bn1.weight'])
-block.state_dict()['bn1.running_var'] /= 10
-print(block.state_dict()['bn1.weight'])
-print(torch.sqrt(block.state_dict()['bn1.running_var']))
-block.eval()
+# print(block.state_dict()['bn1.weight'])
+# print(block.state_dict()['bn1.weight'])
+# block.state_dict()['bn1.running_var'] /= 100
+# print(block.state_dict()['bn1.weight'])
+# print(torch.sqrt(block.state_dict()['bn1.running_var']))
 for _ in range(10):
-    x0 = torch.randn(10, 8, 32, 32)
-    x1 = torch.randn(10, 8, 32, 32)
-    print(torch.norm(block(x0) - block(x1))/torch.norm(x0 - x1))
+    block.train()
+    loss = torch.norm(block(x) - y)
+    loss.backward()
+    # print(torch.sqrt(block.state_dict()['bn2.running_var']))
+    print(hooker.lip().item())
+    for h in hooker:
+        print(h.name)
+    print(hooker._lips)
+
+    block.eval()
+    x0 = torch.rand(1, 8, 32, 32) # + 10 * torch.ones(1, 8, 32, 32)
+    # x1 = torch.rand(1, 8, 32, 32)
+    x1 = x0 + 0.001 * torch.rand(1, 8, 32, 32)
+    print((torch.norm(block(x0) - block(x1))/torch.norm(x0 - x1)).item())
     # deltax = torch.randn(1, 8, 32, 32)
     # print(torch.norm(block(x0 + deltax) - block(x0))/torch.norm(deltax))
 

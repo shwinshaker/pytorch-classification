@@ -141,7 +141,7 @@ class StateDict:
 
     def duplicate_model(self):
         self.duplicate_layers(range(self.num_layers))
-        self.halve_weight()
+        self.scale_weight()
 
     def plus_layer(self, l):
         bs = self.get_block_indices_in_layer(l)
@@ -155,12 +155,16 @@ class StateDict:
     def plus_model(self):
         self.plus_layers(range(self.num_layers))
 
-    def halve_weight(self):
+    def scale_weight(self, alpha=1.41421356237):
         for key in self.state_dict:
-            if 'layer' in key and ('conv' in key or 'bn2' in key): # if preresnet
+            if 'layer' in key and ('conv' in key or 'bn' in key): # if preresnet
                 print('preresnet preclaimed!')
+                # bn - relu - conv - bn - relu - conv
                 if 'weight' in key or 'bias' in key:
-                    self.state_dict[key] /= 1.41421356237
+                    self.state_dict[key] /= alpha
+                    # self.state_dict[key] /= 1.189207115003
+                if 'running_var' in key:
+                    self.state_dict[key] /= alpha**2
             # if 'layer' in key and ('conv' in key or 'bn' in key): # if resnet
             #     print('resnet preclaimed!')
             #     if 'weight' in key or 'bias' in key:
