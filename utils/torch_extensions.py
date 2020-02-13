@@ -5,6 +5,7 @@ from collections import OrderedDict
 from . import Logger
 from . import reduce_list
 from copy import deepcopy
+from math import log2
 import pickle
 
 __all__ = ['StateDict', 'ModelArch', 'ChunkSampler']
@@ -97,10 +98,10 @@ class StateDict:
 
     def duplicate_block(self, l, b):
 
-        print('> now duplicate %i-%i' % (l,b))
+        # print('> now duplicate %i-%i' % (l,b))
         if self.special_first:
             if b == 0:
-                print('> This is the first block, copy from back!')
+                # print('> This is the first block, copy from back!')
                 # this block changes the feature map
                 # copy the one after it
                 self.insert_before(l, b+1, self.get_block(l, b+1))
@@ -126,7 +127,7 @@ class StateDict:
         # duplicate
         for l, layer in enumerate(block_indices):
             for b in layer:
-                print('now duplicating: layer %i - block %i' % (l, b))
+                # print('now duplicating: layer %i - block %i' % (l, b))
                 self.duplicate_block(l, b)
                 # test consecutive indices
             self.get_block_indices_in_layer(l)
@@ -168,7 +169,7 @@ class StateDict:
             #         self.state_dict[key] /= alpha**2
 
             if 'layer' in key and ('conv' in key or 'bn2' in key): # if preresnet
-                print('preresnet preclaimed!')
+                # print('preresnet preclaimed!')
                 if 'weight' in key or 'bias' in key:
                     self.state_dict[key] /= 1.41421356237
 
@@ -235,6 +236,12 @@ class ModelArch:
         arch: stepsize in each block in each layer
     '''
 
+    # block remainder
+    __rmd = 2
+
+    # num filters per block
+    __nfpb = 2
+
     def __init__(self, model_name, model, epochs, depth, max_depth=None, dpath=None,
                  operation='duplicate', atom='block', dataset=None):
 
@@ -254,16 +261,20 @@ class ModelArch:
         else:
             raise KeyError(dataset)
 
-        assert (depth - 2) % (self.num_layers * 2) == 0, 'When use basicblock, depth should be %in+2, e.g. 20, 32, 44, 56, 110, 1202' % (self.num_layers * 2)
-        assert (max_depth - 2) % (self.num_layers * 2) == 0, 'When use basicblock, depth should be %in+2, e.g. 20, 32, 44, 56, 110, 1202' % (self.num_layers * 2)
+        assert (depth - self.__rmd) % (self.num_layers * self.__nfpb) == 0, 'When use basicblock, depth should be %in+2, e.g. 20, 32, 44, 56, 110, 1202' % (self.num_layers * 2)
+        assert (max_depth - self.__rmd) % (self.num_layers * self.__nfpb) == 0, 'When use basicblock, depth should be %in+2, e.g. 20, 32, 44, 56, 110, 1202' % (self.num_layers * 2)
 
 
-        self.blocks_per_layer = (depth - 2) // (self.num_layers * 2)
+        self.init_depth = depth
+        self.blocks_per_layer = self.__get_nbpl(depth)
+        assert max_depth, 'use adaptive trigger, must provide depth bound'
+        self.max_depth = max_depth
+        self.max_blocks_per_layer = self.__get_nbpl(max_depth)
         self.arch = [[1.0 for _ in range(self.blocks_per_layer)] for _ in range(self.num_layers)]
+        self.num_grows = self.get_grows_left()
+        print('[Model Arch] num grows: %i' % self.num_grows)
         # self.arch_history = [self.arch]
         self.best_arch = None
-        self.max_depth = max_depth
-        self.max_blocks_per_layer = (max_depth - 2) // (self.num_layers * 2)
 
         # grow scheme sanity check
         if atom not in ['block', 'layer', 'model']:
@@ -280,7 +291,7 @@ class ModelArch:
         # model architecture and stepsize logger
         self.dpath = dpath
         self.logger = Logger(os.path.join(dpath, 'arch.txt'))
-        self.logger.set_names(['epoch', *['layer%i-#blocks' % l for l in range(self.num_layers)], '# parameters'])
+        self.logger.set_names(['epoch', 'depth', *['layer%i-#blocks' % l for l in range(self.num_layers)], '# parameters(M)', 'PPE(M)'])
 
         # model parameters and grow epoch logger
         self.epochs = epochs
@@ -432,31 +443,44 @@ class ModelArch:
 
         return None
 
+    def __get_num_paras(self, model):
+        return sum(p.numel() for p in model.parameters())/1000000.0
+
     def record(self, epoch, model):
         assert len(self.grow_epochs) == len(self.num_parameters)
 
         # record grow epochs and num params
-        self.num_parameters.append(sum(p.numel() for p in model.parameters())/1000000.0)
+        self.num_parameters.append(self.__get_num_paras(model))
         self.grow_epochs.append(epoch + 1) # + 1 to be consistent with fixed
 
-    def _get_approx_time(self):
+    def _get_ppe(self, epoch=None):
         assert len(self.grow_epochs) == len(self.num_parameters)
+    
+        if epoch:
+            # push a temporary epoch
+            self.grow_epochs.append(epoch + 1)
+            deno = epoch + 1
+        else:
+            # it must be the final epoch
+            self.grow_epochs.append(self.epochs)
+            deno = self.epochs
 
-        self.grow_epochs.append(self.epochs)
         times = [e2 - e1 for e1, e2 in zip(self.grow_epochs[:-1], self.grow_epochs[1:])]
         assert all([t > 0 for t in times])
-        assert sum(times) == self.epochs
-        return sum([t * np for t, np in zip(times, self.num_parameters)])
+        assert sum(times) == epoch + 1 if epoch else self.epochs
+        # remove temporary epoch
+        self.grow_epochs.pop()
+        return sum([t * np for t, np in zip(times, self.num_parameters)]) / deno
 
     def update(self, epoch, is_best, model):
         if is_best:
             self.best_arch = deepcopy(self.arch)
 
-        num_paras = sum(p.numel() for p in model.parameters())
-        self.logger.append([epoch, *self.get_num_blocks_all_layer(), num_paras])
+        num_paras = self.__get_num_paras(model)
+        self.logger.append([epoch, self.get_depth(), *self.get_num_blocks_all_layer(),
+                            num_paras, self._get_ppe(epoch=epoch)])
         # self.arch_history.append(self.arch)
-
-        print('    Total params: %.2fM' % (num_paras/1000000.0))
+        print('    Total params: %.2fM' % num_paras)
 
         self.state_dict.update(epoch, is_best, model)
 
@@ -477,6 +501,14 @@ class ModelArch:
             indices.extend([(l, b) for b in range(len(self.arch[l]))])
         return indices
 
+    def __get_nbpl(self, depth):
+        return self.get_num_blocks_per_layer(depth=depth)
+
+    def get_num_blocks_per_layer(self, depth=None, best=False):
+        if depth:
+            return (depth - self.__rmd) // (self.num_layers * self.__nfpb)
+        return self.get_num_blocks_model(best=best) // self.num_layers
+
     def get_num_blocks_all_layer(self, best=False):
         if best:
             num_blocks = [len(layer) for layer in self.best_arch]
@@ -492,6 +524,11 @@ class ModelArch:
             num_blocks = sum([len(layer) for layer in self.arch])
         return num_blocks
 
+    def get_depth(self, best=False):
+        return self.get_num_blocks_model(best=best) * self.__nfpb + self.__rmd
+
+    def get_grows_left(self):
+        return int(log2(self.max_blocks_per_layer / self.get_num_blocks_per_layer()))
 
     def merge_block(self, *args):
         '''

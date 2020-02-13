@@ -134,15 +134,15 @@ class AdaptMultiStepCosineLR(CosineAnnealingLR):
         self.next_T = epochs
         super(AdaptMultiStepCosineLR, self).__init__(optimizer, self.next_T - self.T, eta_min)
 
-        self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
-        self.logger.set_names(['epoch', 'learning_rate'])
+        # self.logger = Logger(os.path.join(dpath, 'Learning_rate.txt'))
+        # self.logger.set_names(['epoch', 'learning_rate'])
 
     def step_(self, epoch, err):
-        print(epoch, self.last_epoch, self.T_max, self.T, self.next_T)
+        print('[Lr Scheduler] epoch: %i - last_epoch: %i - T_max: %i - T: %i - next_T: %i' % (epoch, self.last_epoch, self.T_max, self.T, self.next_T))
 
         lrs = self.get_lr()
         assert(len(set(lrs)) == 1), 'unexpected number of unique lrs!'
-        self.logger.append([epoch, lrs[0]])
+        # self.logger.append([epoch, lrs[0]])
 
         if self.milestones and epoch == self.milestones[0] - 1:
             self.last_epoch = -1 # because step will increment last_epoch 
@@ -164,7 +164,8 @@ class AdaptMultiStepCosineLR(CosineAnnealingLR):
         self.T_max = self.next_T - epoch - 1
 
     def close(self):
-        self.logger.close()
+        pass
+        # self.logger.close()
 
 def adacosine(**kwargs):
     return AdaptMultiStepCosineLR(**kwargs)

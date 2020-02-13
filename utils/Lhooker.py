@@ -105,7 +105,7 @@ class Hooker:
             v = self.__normalize(v)
             
         sigma = torch.norm(F.conv2d(v, weight, stride=stride, padding=padding, bias=None).view(-1))
-        print('%s - specnorm_iter: %.4f' % (self.name, sigma.item()))
+        # print('%s - specnorm_iter: %.4f' % (self.name, sigma.item()))
         # comparison with exact solution
         # print('%s - specnorm_iter: %.4f - specnorm_svd: %.4f' % (self.name, sigma.item(), spec_norm(weight.cpu().numpy(), u.size()[2:])))
 
@@ -146,7 +146,7 @@ class Hooker:
         assert self.module.eps == 1e-5
         # this will return a python number, no need to do tensor.item() again
         lip = torch.max(torch.abs(weight) / torch.sqrt(var + self.module.eps))
-        print('%s - lip: %.4f - weight: %.4f - var: %.4f' % (self.name, lip.item(), torch.max(torch.abs(weight)).item(), torch.max(var).item()))
+        # print('%s - lip: %.4f - weight: %.4f - var: %.4f' % (self.name, lip.item(), torch.max(torch.abs(weight)).item(), torch.max(var).item()))
         return lip
 
     def __get_parameter(self, name):
