@@ -1,0 +1,3 @@
+s [727] [2] Thu Feb  6 14:47:47 PST 2020 [Path]: checkpoints/tiny-imagenet/Batch-Lip-Orig-resnet-18-fixed-30-60-duplicate-cosine_restart--lr=0-5-noscale_implicit_metric
+s [1653] [4] Thu Feb  6 14:48:24 PST 2020 [Path]: checkpoints/tiny-imagenet/Batch-Lip-Orig-resnet-66-cosine_restart-30-60-lr=0-5-noscale_metric
+s [7367] [5] Thu Feb  6 14:52:07 PST 2020 [Path]: checkpoints/tiny-imagenet/Batch-Lip-Orig-resnet-18-fixed-28-70-duplicate-cosine_restart--lr=0-5-noscale_implicit_metric

@@ -1,0 +1,2 @@
+s [47687] [5] Mon Feb  3 20:47:18 PST 2020 [Path]: checkpoints/tiny-imagenet/Batch-Lip-Orig-resnet-18-adapt-66-duplicate-cosine_restart-lr=0-5-window=10-reserve=20-thresh=1-4-trigger=TolSmoothMeanLip-noscale_implicit_1
+s [47704] [6] Mon Feb  3 20:47:22 PST 2020 [Path]: checkpoints/tiny-imagenet/Batch-Lip-Orig-resnet-18-adapt-66-duplicate-cosine_restart-lr=0-5-window=10-reserve=20-thresh=1-4-trigger=TolSmoothMeanLip-noscale_implicit_2

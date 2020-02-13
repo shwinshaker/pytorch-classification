@@ -7,15 +7,15 @@
 #!/bin/bash
 debug=0 # 100 # 
 
-model='preresnet' # 'midnet' # "preresnet" # transresnet
-dataset="cifar10" # cifar10
-depth=20 # 3*2 * num_blocks_per_layer + 2
-grow=true
+model='resnet' # 'midnet' # "preresnet" # transresnet
+dataset="tiny-imagenet" # "cifar100" # cifar10
+depth=66 # 18 # 20 # 14 # 3*2 * num_blocks_per_layer + 2
+grow=false # true
 hooker='Lip'
 
 # grow start -------------------------
 mode='fixed' # 'adapt'
-maxdepth=74 # 50
+maxdepth=66 # 74
 grow_atom='model' # 'layer'
 operation='duplicate' # 'plus' # in duplicate operation the first block will be treated differently, as suggested by the baseline work
 scale=false # scale the residual by stepsize? For output if not adapt
@@ -23,19 +23,15 @@ trace=('norm') #  'pc2')
 # ------ adapt --------------
 scale_down=True # scale the residual by activations
 err_atom='model' # 'layer'
-thresh='1.4' # '0.0' #'1.1'
+thresh='1.3' # '0.0' #'1.1'
 backtrack=3
-reserve=30
+reserve=20 # 30
 window=10 # 7 # only thing that works now
 # trigger='TolSmoothMaxLip'
 trigger='TolSmoothMeanLip'
 # ----- fixed ---------------
 if [ "$grow" = true ] && [ "$mode" = 'fixed' ]; then
-    # dupEpoch=(96 134)
-    # dupEpoch=(60 110)
-    # dupEpoch=(39 130)
-    dupEpoch=($2 $3)
-    # dupEpoch=($2)
+    dupEpoch=(30 60)
 else
     dupEpoch=()
 fi
@@ -50,13 +46,13 @@ fi
 # grow end -------------------------
 
 # regular hypers -----------
-epochs=164 # 2 # 10
+epochs=90 # 164 # 2 # 10
 # cosine_restart for any grow doesn't require schedule
-scheduler='adacosine' # 'cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
+scheduler='cosine' # 'acosine' # 'constant' # 'adapt' # 'constant' # 'expo' # 'cosine' # constant, step, cosine
 # schedule=(81 122) 
 # schedule=(54 108) # even
 if [ "$grow" = false ]; then
-    schedule=(60 110) # test with the same schedule
+    schedule=(30 60) # test with the same schedule
     # schedule=() 
 else
     schedule=() # ($2 $3) # test with the same schedule
@@ -65,23 +61,22 @@ fi
 # schedule=($2 $3) # test with the same schedule
 # schedule=(20)
 regularization='' # 'truncate_error'
-lr='0.2' # '0.2'
+lr='0.5' # '0.2'
 gamma='0.1' # 0.1 # if scheduler == step or expo
 weight_decay='1e-4'
 r_gamma='1e-3' # truncate error regularization coefficient
-train_batch='128'
+train_batch='128' # batch size could be lower
 test_batch='100'
 
 gpu_id=$1 # 4 # $3 #5
 # gpu_id='1,2' # 4 # $3 #5
 workers=4 # 32 # 4 * num gpus; or estimate by throughput
 log_file="train.out"
-replica="" # $2
+replica=$2
 if [ "$grow" = true ];then
-    suffix="implicit_running_var" # this seems better, though not right in theory
-    # suffix="implicit_rr" # "2" # "no_bn" # "regularization" # -res" # pca"
+    suffix="implicit" # "2" # "no_bn" # "regularization" # -res" # pca"
 else
-    suffix="" # "overhead"
+    suffix=""
 fi
 prefix="Batch-Lip"
 
@@ -94,9 +89,9 @@ if [ ! -z "$replica" ];then
 fi
 
 if (( debug > 0 )); then
-    epochs=10
-    # dupEpoch=(2 4) # ()
-    dupEpoch=($2 $3) # ()
+    epochs=5
+    dupEpoch=(2 4) # ()
+    # dupEpoch=($2 $3) # ()
     # schedule=(2 4) # (3 4) # ()
     schedule=() # (3 4) # ()
     thresh='1.0' # '0.0' #'1.1'
@@ -127,7 +122,7 @@ fi
 
 ### -------------------------------------------- caution!
 
-if [ ! "$scheduler" = constant ] && [ ! "$scheduler" = cosine ] && [ ! "$scheduler" = acosine ] && [ ! "$scheduler" = cosine_restart ] && [ ! "$scheduler" = 'adacosine' ] ;then
+if [ ! "$scheduler" = constant ] && [ ! "$scheduler" = cosine ] && [ ! "$scheduler" = acosine ] && [ ! "$scheduler" = cosine_restart ] ;then
     dir="$dir-gamma=${gamma//'.'/'-'}"
 fi
 
@@ -199,6 +194,6 @@ fi
 pid=$!
 echo "[$pid] [$gpu_id] [Path]: $checkpoint"
 if (( debug == 0 )); then
-    echo "s [$pid] [$gpu_id] $(date) [Path]: $checkpoint" >> log_metric.txt
+    echo "s [$pid] [$gpu_id] $(date) [Path]: $checkpoint" >> log-rackjesh.txt
 fi
 

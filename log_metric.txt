@@ -123,3 +123,6 @@ s [91171] [6] Tue Feb 11 15:06:18 PST 2020 [Path]: checkpoints/cifar10/Batch-Lip
 s [204716] [0] Tue Feb 11 16:22:22 PST 2020 [Path]: checkpoints/cifar10/Batch-Lip-preresnet-20-fixed-60-110-duplicate-adacosine--lr=0-2-noscale_implicit_both
 s [209822] [0] Tue Feb 11 16:26:12 PST 2020 [Path]: checkpoints/cifar10/Batch-Lip-preresnet-20-fixed-60-110-duplicate-adacosine--lr=0-2-noscale_implicit_scale
 s [218671] [7] Tue Feb 11 16:33:03 PST 2020 [Path]: checkpoints/cifar10/Batch-Lip-preresnet-20-fixed-60-110-duplicate-adacosine--lr=0-2-noscale_implicit_running_var
+s [70470] [4] Wed Feb 12 16:25:58 PST 2020 [Path]: checkpoints/cifar10/Batch-Lip-Orig-resnet-20-adapt-74-duplicate-adacosine-lr=0-5-window=10-reserve=30-thresh=1-4-trigger=TolSmoothMeanLip-noscale_implicit
+s [70523] [7] Wed Feb 12 16:26:04 PST 2020 [Path]: checkpoints/cifar10/Batch-Lip-Orig-resnet-20-adapt-74-duplicate-adacosine-lr=0-5-window=10-reserve=30-thresh=1-4-trigger=TolSmoothMeanLip-noscale_implicit_1
+s [70593] [6] Wed Feb 12 16:26:07 PST 2020 [Path]: checkpoints/cifar10/Batch-Lip-Orig-resnet-20-adapt-74-duplicate-adacosine-lr=0-5-window=10-reserve=30-thresh=1-4-trigger=TolSmoothMeanLip-noscale_implicit_2
