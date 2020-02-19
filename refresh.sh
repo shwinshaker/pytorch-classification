@@ -10,7 +10,7 @@
 # clear=false
 
 log_file=$1
-[[ -z $log_file ]] && log_file='log-rackjesh.txt'
+[[ -z $log_file ]] && log_file='log-cifar.txt' # 'log-rackjesh.txt'
 
 while getopts "h?c" opt; do
     case "$opt" in
@@ -43,8 +43,9 @@ do
     # echo "> $path"
     tail -n 6 $path/train.out
     epochs=$(($(cat $path/log.txt | wc -l) - 1))
-    echo "Epoch: $epochs"
-    if [ $epochs -lt 164 ];then
+    total_epochs=$(cat $path/train.out | grep 'Epochs: [0-9]*' | awk -F ':' '{print$2}')
+    echo "Epoch: $epochs Total: $total_epochs"
+    if [ $epochs -lt $total_epochs ];then
 	echo -e '\033[31m not finished \033[0m ' 
 	[[ $clear ]] && echo "$line [$epochs]" >> log1.txt
     fi
