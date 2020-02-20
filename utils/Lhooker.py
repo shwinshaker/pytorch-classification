@@ -163,7 +163,7 @@ class Hooker:
 class BlockHooker:
     # named_children -> immediate children
 
-    def __init__(self, name, block, device=None, n_power_iterations=1):
+    def __init__(self, name, block, device=None, n_power_iterations=100):
         assert block.__class__.__name__ in ['BasicBlock', 'Bottleneck'], block.__class__.__name__
         self.name = name
         self.device = device
