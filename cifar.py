@@ -533,9 +533,9 @@ def main():
     else:
         logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title)
         if args.regularization:
-            logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.', 'Regular Loss'])
+            logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Test Loss', 'Train Acc.', 'Valid Acc.', 'Test Acc.', 'Regular Loss'])
         else:
-            logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Train Acc.', 'Valid Acc.'])
+            logger.set_names(['Learning Rate', 'Train Loss', 'Valid Loss', 'Test Loss', 'Train Acc.', 'Valid Acc.', 'Test Acc.'])
 
     # ---------- grow -----------
     # model architecture tracker
@@ -581,13 +581,14 @@ def main():
 
         # errs = hooker.output(epoch, archs=modelArch.arch, atom=args.err_atom, scale=args.scale)
         val_loss, val_acc = test(valloader, model, criterion, epoch, use_cuda, hooker)
+        test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda, hooker=None)
 
         print('\nEpoch: [%d | %d] LR: %f Train-Loss: %.4f Val-Loss: %.4f Train-Acc: %.4f Val-Acc: %.4f' % (epoch + 1, args.epochs, scheduler.lr_(), train_loss, val_loss, train_acc, val_acc))
         # append logger file
         if not regularizer:
-            logger.append([scheduler.lr_(), train_loss, val_loss, train_acc, val_acc])
+            logger.append([scheduler.lr_(), train_loss, val_loss, test_loss, train_acc, val_acc, test_acc])
         else:
-            logger.append([scheduler.lr_(), train_loss, val_loss, train_acc, val_acc, regular_loss])
+            logger.append([scheduler.lr_(), train_loss, val_loss, test_loss, train_acc, val_acc, test_acc, regular_loss])
 
         # save model
         is_best = val_acc > best_val_acc
