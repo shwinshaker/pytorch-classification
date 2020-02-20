@@ -312,6 +312,10 @@ class TolTrigger:
         self.history = []
         self.smooth_history = []
 
+        # adaptive tolerance
+        # self.tolerance = 1 + (self.tolerance - 1)/2
+        # print('tolerance updated to: %.4f' % self.tolerance)
+
 
     def close(self):
         pass
