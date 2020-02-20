@@ -297,6 +297,7 @@ class TolTrigger:
         # final model will get at least 30 epochs of training
         num_grows_left = self.modelArch.get_grows_left()
         if self.epochs - epoch == self.reserve + (num_grows_left-1) * self.window + 1:
+        # if self.epochs - epoch == self.reserve + (num_grows_left-1) * self.window * 2 + 1:
             print('Forced grow!')
             return 1
 
